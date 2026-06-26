@@ -20,7 +20,7 @@ agnc_status_t agnc_permission_ask_shell(const char *command, int *allowed)
     *allowed = 0;
 
     /* stderr agar tidak tercampur jawaban model di stdout. */
-    fprintf(stderr, "agnc: Allow shell command? [y/N] %s\n", command != NULL ? command : "(empty)");
+    fprintf(stderr, "agnc: [permission] allow shell? [y/N] %s\n", command != NULL ? command : "(empty)");
     fflush(stderr);
 
     if (fgets(answer, sizeof(answer), stdin) == NULL) {

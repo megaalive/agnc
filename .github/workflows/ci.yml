@@ -17,8 +17,9 @@ jobs:
         run: |
           if (Test-Path .\scripts\build.ps1) {
             .\scripts\build.ps1
-            cmake --build out\build\x64-Debug --target test_sse
+            cmake --build out\build\x64-Debug --target test_sse test_shell test_markdown_render test_atomic_write
             ctest --test-dir out\build\x64-Debug --output-on-failure
+            .\out\build\x64-Debug\agnc.exe doctor
             .\out\build\x64-Debug\agnc.exe --version
           } else {
             Write-Error "build.ps1 not found"

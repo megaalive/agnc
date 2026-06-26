@@ -29,4 +29,7 @@ void agnc_config_free(agnc_config_t *config);
 /* Muat config dari path; jika path NULL, gunakan ~/.agnc.json. */
 agnc_status_t agnc_config_load(const char *path, agnc_config_t *config);
 
+/* Tulis teks JSON ke path dengan rename atomik; validasi JSON dulu. */
+agnc_status_t agnc_config_save_json(const char *path, const char *json_text);
+
 #endif

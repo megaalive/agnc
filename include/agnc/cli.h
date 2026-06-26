@@ -21,6 +21,7 @@ typedef struct {
     int show_help;    /* `agnc --help` atau default tanpa argumen */
     int show_print;   /* `agnc --print "prompt"` */
     int no_tools;     /* `agnc --no-tools` — chat tanpa tool schema */
+    int auto_approve; /* `agnc --yes` — setujui shell tanpa prompt */
     char *print_prompt; /* Prompt untuk mode headless */
 } agnc_cli_options_t;
 
@@ -39,6 +40,6 @@ int agnc_cli_run_doctor(void);
 int agnc_cli_run_help(void);
 
 /* Jalankan mode headless --print; return exit code proses. */
-int agnc_cli_run_print(const char *prompt, int no_tools);
+int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve);
 
 #endif

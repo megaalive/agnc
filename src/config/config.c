@@ -5,6 +5,7 @@
  */
 
 #include "agnc/config.h"
+#include "agnc/atomic_write.h"
 #include "agnc/path.h"
 
 #include <stdio.h>
@@ -365,4 +366,36 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     }
 
     return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_config_save_json(const char *path, const char *json_text)
+{
+    char *default_path = NULL;
+    const char *save_path = path;
+    yyjson_doc *doc;
+    size_t length;
+    agnc_status_t status;
+
+    if (json_text == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    doc = yyjson_read(json_text, strlen(json_text), 0);
+    if (doc == NULL) {
+        return AGNC_STATUS_JSON_ERROR;
+    }
+    yyjson_doc_free(doc);
+
+    if (save_path == NULL) {
+        status = agnc_path_default_config(&default_path);
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+        save_path = default_path;
+    }
+
+    length = strlen(json_text);
+    status = agnc_atomic_write_file(save_path, json_text, length);
+    free(default_path);
+    return status;
 }

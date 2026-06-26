@@ -61,6 +61,11 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
             continue;
         }
 
+        if (strcmp(argv[index], "--yes") == 0 || strcmp(argv[index], "-y") == 0) {
+            options->auto_approve = 1;
+            continue;
+        }
+
         if (strcmp(argv[index], "--print") == 0) {
             int prompt_index;
 
@@ -69,6 +74,11 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
             while (prompt_index < argc && argv[prompt_index][0] == '-') {
                 if (strcmp(argv[prompt_index], "--no-tools") == 0) {
                     options->no_tools = 1;
+                    prompt_index++;
+                    continue;
+                }
+                if (strcmp(argv[prompt_index], "--yes") == 0 || strcmp(argv[prompt_index], "-y") == 0) {
+                    options->auto_approve = 1;
                     prompt_index++;
                     continue;
                 }
@@ -110,6 +120,7 @@ int agnc_cli_run_help(void)
     printf("  agnc doctor                    Check environment and dependencies\n");
     printf("  agnc --print \"your prompt\"     Run headless agent query (Phase 1)\n");
     printf("  agnc --print --no-tools \"...\"  Chat tanpa tool schema (model tanpa tool use)\n");
+    printf("  agnc --print --yes \"...\"       Setujui shell otomatis (non-interaktif)\n");
     printf("  agnc --help                    Show this help\n");
     return 0;
 }

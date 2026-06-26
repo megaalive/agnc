@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int agnc_cli_run_print(const char *prompt, int no_tools)
+int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve)
 {
     agnc_config_t config;
     agnc_status_t status;
@@ -40,6 +40,10 @@ int agnc_cli_run_print(const char *prompt, int no_tools)
         config.enable_tools = 0;
         config.tool_read_file = 0;
         config.tool_shell = 0;
+    }
+
+    if (auto_approve) {
+        config.ask_shell_permission = 0;
     }
 
     status = agnc_query_print(&config, prompt);

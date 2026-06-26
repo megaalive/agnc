@@ -244,10 +244,15 @@ static agnc_status_t agnc_execute_tool(
     *tool_result = NULL;
 
     if (strcmp(tool_name, "read_file") == 0) {
+        fprintf(stderr, "agnc: [tool] read_file\n");
         return agnc_tool_read_file_execute(tool_arguments, tool_result);
     }
 
     if (strcmp(tool_name, "shell") == 0) {
+        const char *preview = agnc_tool_shell_command_preview(tool_arguments);
+
+        fprintf(stderr, "agnc: [tool] shell: %s\n", preview != NULL ? preview : "(empty)");
+
         if (config->ask_shell_permission) {
             status = agnc_permission_ask_shell(agnc_tool_shell_command_preview(tool_arguments), &allowed);
             if (status != AGNC_STATUS_OK) {
