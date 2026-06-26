@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int agnc_cli_run_print(const char *prompt)
+int agnc_cli_run_print(const char *prompt, int no_tools)
 {
     agnc_config_t config;
     agnc_status_t status;
@@ -35,6 +35,12 @@ int agnc_cli_run_print(const char *prompt)
      * Streaming delta masih bermasalah pada sebagian model (teks kumulatif per chunk).
      */
     config.stream = 0;
+
+    if (no_tools) {
+        config.enable_tools = 0;
+        config.tool_read_file = 0;
+        config.tool_shell = 0;
+    }
 
     status = agnc_query_print(&config, prompt);
     agnc_config_free(&config);

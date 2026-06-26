@@ -364,6 +364,7 @@ FodyWeavers.xsd
 
 # agnc project
 .keys/
+.handoffs/
 build/
 out/
 .env

@@ -7,6 +7,7 @@
  */
 
 #include "agnc/cli.h"
+#include "agnc/console.h"
 #include "agnc/version.h"
 
 #include <stdio.h>
@@ -17,6 +18,9 @@ int main(int argc, char **argv)
     agnc_cli_options_t options;
     agnc_status_t status;
     int exit_code = 0;
+
+    /* UTF-8 + ANSI sebelum output apa pun (termasuk --help). */
+    agnc_console_init();
 
     status = agnc_cli_parse(argc, argv, &options);
     if (status != AGNC_STATUS_OK) {
@@ -30,7 +34,7 @@ int main(int argc, char **argv)
     } else if (options.show_doctor) {
         exit_code = agnc_cli_run_doctor();
     } else if (options.show_print) {
-        exit_code = agnc_cli_run_print(options.print_prompt);
+        exit_code = agnc_cli_run_print(options.print_prompt, options.no_tools);
     } else {
         exit_code = agnc_cli_run_help();
     }

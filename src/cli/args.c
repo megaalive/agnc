@@ -56,14 +56,31 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
             continue;
         }
 
+        if (strcmp(argv[index], "--no-tools") == 0) {
+            options->no_tools = 1;
+            continue;
+        }
+
         if (strcmp(argv[index], "--print") == 0) {
+            int prompt_index;
+
             options->show_print = 1;
-            if (index + 1 < argc) {
-                options->print_prompt = agnc_strdup_local(argv[index + 1]);
+            prompt_index = index + 1;
+            while (prompt_index < argc && argv[prompt_index][0] == '-') {
+                if (strcmp(argv[prompt_index], "--no-tools") == 0) {
+                    options->no_tools = 1;
+                    prompt_index++;
+                    continue;
+                }
+                break;
+            }
+
+            if (prompt_index < argc) {
+                options->print_prompt = agnc_strdup_local(argv[prompt_index]);
                 if (options->print_prompt == NULL) {
                     return AGNC_STATUS_OUT_OF_MEMORY;
                 }
-                index++;
+                index = prompt_index;
             }
             continue;
         }
@@ -92,6 +109,7 @@ int agnc_cli_run_help(void)
     printf("  agnc --version                 Show version\n");
     printf("  agnc doctor                    Check environment and dependencies\n");
     printf("  agnc --print \"your prompt\"     Run headless agent query (Phase 1)\n");
+    printf("  agnc --print --no-tools \"...\"  Chat tanpa tool schema (model tanpa tool use)\n");
     printf("  agnc --help                    Show this help\n");
     return 0;
 }

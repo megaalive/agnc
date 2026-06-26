@@ -176,6 +176,53 @@ static char *agnc_config_find_dev_api_key(void)
     return NULL;
 }
 
+static int agnc_config_json_array_contains(yyjson_val *array, const char *name)
+{
+    size_t index;
+    size_t count;
+    yyjson_val *item;
+
+    if (array == NULL || !yyjson_is_arr(array) || name == NULL) {
+        return 0;
+    }
+
+    count = yyjson_arr_size(array);
+    for (index = 0; index < count; index++) {
+        item = yyjson_arr_get(array, index);
+        if (item != NULL && yyjson_is_str(item) && strcmp(yyjson_get_str(item), name) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t *config)
+{
+    yyjson_val *tools;
+    yyjson_val *permissions;
+    yyjson_val *enabled;
+    yyjson_val *always_ask;
+
+    tools = yyjson_obj_get(root, "tools");
+    if (tools != NULL) {
+        enabled = yyjson_obj_get(tools, "enabled");
+        if (enabled != NULL && yyjson_is_arr(enabled)) {
+            config->tool_read_file = agnc_config_json_array_contains(enabled, "read_file");
+            config->tool_shell = agnc_config_json_array_contains(enabled, "shell");
+            config->enable_tools = config->tool_read_file || config->tool_shell;
+        }
+    }
+
+    permissions = yyjson_obj_get(root, "permissions");
+    if (permissions != NULL) {
+        always_ask = yyjson_obj_get(permissions, "always_ask");
+        if (always_ask != NULL && yyjson_is_arr(always_ask)) {
+            config->ask_shell_permission = agnc_config_json_array_contains(always_ask, "shell");
+        }
+    }
+}
+
 void agnc_config_init(agnc_config_t *config)
 {
     if (config == NULL) {
@@ -185,6 +232,10 @@ void agnc_config_init(agnc_config_t *config)
     memset(config, 0, sizeof(*config));
     config->max_tool_iterations = 25;
     config->stream = 1;
+    config->enable_tools = 1;
+    config->tool_read_file = 1;
+    config->tool_shell = 1;
+    config->ask_shell_permission = 1;
 }
 
 void agnc_config_free(agnc_config_t *config)
@@ -303,6 +354,8 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
             config->verbose = yyjson_get_bool(value) ? 1 : 0;
         }
     }
+
+    agnc_config_apply_tools_permissions(root, config);
 
     yyjson_doc_free(doc);
 

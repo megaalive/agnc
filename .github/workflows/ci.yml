@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          if (Test-Path .\scripts\build.ps1) {
+            .\scripts\build.ps1
+            cmake --build out\build\x64-Debug --target test_sse
+            ctest --test-dir out\build\x64-Debug --output-on-failure
+            .\out\build\x64-Debug\agnc.exe --version
+          } else {
+            Write-Error "build.ps1 not found"
+          }

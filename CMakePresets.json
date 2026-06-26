@@ -27,7 +27,8 @@
         "strategy": "external"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_MANIFEST_MODE": "ON"
       }
     },
     {
@@ -59,7 +60,8 @@
       "displayName": "Linux Debug",
       "inherits": "linux-base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_MANIFEST_MODE": "ON"
       }
     }
   ],

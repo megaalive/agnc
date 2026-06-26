@@ -17,6 +17,10 @@ typedef struct {
     int max_tool_iterations;
     int stream;
     int verbose;
+    int enable_tools;
+    int tool_read_file;
+    int tool_shell;
+    int ask_shell_permission;
 } agnc_config_t;
 
 void agnc_config_init(agnc_config_t *config);

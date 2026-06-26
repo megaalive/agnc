@@ -39,7 +39,7 @@ Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 Push-Location $root
 try {
     & $devShell -Arch amd64 -SkipAutomaticLocation | Out-Null
-    & $cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain"
+    & $cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_MANIFEST_MODE=ON"
     & $cmake --build --preset $preset
 
     if (Test-Path $binary) {
