@@ -11,9 +11,13 @@
 
 typedef enum {
     AGNC_STATUS_OK = 0,              /* Operasi berhasil */
-    AGNC_STATUS_INVALID_ARGUMENT,      /* Parameter input tidak valid */
+    AGNC_STATUS_INVALID_ARGUMENT,    /* Parameter input tidak valid */
     AGNC_STATUS_IO_ERROR,            /* Gagal baca/tulis file atau env */
-    AGNC_STATUS_OUT_OF_MEMORY        /* Alokasi heap gagal */
+    AGNC_STATUS_OUT_OF_MEMORY,       /* Alokasi heap gagal */
+    AGNC_STATUS_JSON_ERROR,          /* JSON config/request tidak valid */
+    AGNC_STATUS_HTTP_ERROR,          /* Request HTTP gagal */
+    AGNC_STATUS_PROVIDER_ERROR,      /* Provider LLM mengembalikan respons invalid */
+    AGNC_STATUS_TOOL_FAILED          /* Eksekusi tool gagal */
 } agnc_status_t;
 
 /* Konversi kode status ke string pendek untuk logging/doctor. */

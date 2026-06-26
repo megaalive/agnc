@@ -1,0 +1,7 @@
+{
+  "dependencies": [
+    "curl",
+    "yyjson"
+  ],
+  "builtin-baseline": "6da16a9600492fbcb7713560d993ac76823290de"
+}

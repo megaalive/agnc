@@ -31,8 +31,15 @@
       "type": "default",
       "project": "CMakeLists.txt",
       "projectTarget": "agnc.exe",
-      "name": "agnc --help",
-      "args": [ "--help" ]
+      "name": "agnc --print hello",
+      "args": [ "--print", "Say hello in one sentence." ]
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "agnc.exe",
+      "name": "agnc --print read roadmap",
+      "args": [ "--print", "Read roadmap.md and summarize the product goal in one paragraph." ]
     }
   ]
 }

@@ -7,10 +7,6 @@
 
 #include "agnc/status.h"
 
-/*
- * Mengubah enum agnc_status_t menjadi label teks pendek.
- * Label sengaja lowercase agar konsisten di seluruh output CLI.
- */
 const char *agnc_status_to_string(agnc_status_t status)
 {
     switch (status) {
@@ -22,8 +18,15 @@ const char *agnc_status_to_string(agnc_status_t status)
         return "io_error";
     case AGNC_STATUS_OUT_OF_MEMORY:
         return "out_of_memory";
+    case AGNC_STATUS_JSON_ERROR:
+        return "json_error";
+    case AGNC_STATUS_HTTP_ERROR:
+        return "http_error";
+    case AGNC_STATUS_PROVIDER_ERROR:
+        return "provider_error";
+    case AGNC_STATUS_TOOL_FAILED:
+        return "tool_failed";
     default:
-        /* Fallback untuk enum yang belum dipetakan ke string. */
         return "unknown";
     }
 }

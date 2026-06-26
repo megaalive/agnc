@@ -1,21 +1,35 @@
 /*
  * args.c
  *
- * Implementasi parser argumen CLI dan perintah dasar (--version, --help).
- * Fase 0 sengaja memakai parser manual; nanti bisa diganti argtable3
- * saat jumlah flag bertambah (--print, --model, dll.).
+ * Implementasi parser argumen CLI dan perintah dasar (--version, --help, --print).
  */
 
 #include "agnc/cli.h"
 #include "agnc/version.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-/*
- * Mengubah argv[] menjadi struktur agnc_cli_options_t.
- * Return AGNC_STATUS_INVALID_ARGUMENT jika ada token yang tidak dikenal.
- */
+static char *agnc_strdup_local(const char *value)
+{
+#ifdef _MSC_VER
+    return _strdup(value);
+#else
+    return strdup(value);
+#endif
+}
+
+void agnc_cli_options_free(agnc_cli_options_t *options)
+{
+    if (options == NULL) {
+        return;
+    }
+
+    free(options->print_prompt);
+    options->print_prompt = NULL;
+}
+
 agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
 {
     int index;
@@ -24,10 +38,8 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Reset semua flag agar tidak ada sisa state dari pemanggil sebelumnya. */
     memset(options, 0, sizeof(*options));
 
-    /* Lewati argv[0] karena itu nama program, bukan argumen pengguna. */
     for (index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--version") == 0 || strcmp(argv[index], "-V") == 0) {
             options->show_version = 1;
@@ -44,35 +56,42 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
             continue;
         }
 
+        if (strcmp(argv[index], "--print") == 0) {
+            options->show_print = 1;
+            if (index + 1 < argc) {
+                options->print_prompt = agnc_strdup_local(argv[index + 1]);
+                if (options->print_prompt == NULL) {
+                    return AGNC_STATUS_OUT_OF_MEMORY;
+                }
+                index++;
+            }
+            continue;
+        }
+
         fprintf(stderr, "agnc: unknown argument: %s\n", argv[index]);
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (!options->show_version && !options->show_doctor && !options->show_help) {
-        /*
-         * Tanpa subcommand eksplisit, tampilkan help.
-         * Ini mencegah CLI terasa "diam" saat pengguna menjalankan `agnc` saja.
-         */
+    if (!options->show_version && !options->show_doctor && !options->show_help && !options->show_print) {
         options->show_help = 1;
     }
 
     return AGNC_STATUS_OK;
 }
 
-/* Mencetak versi agnc ke stdout; dipakai oleh `agnc --version`. */
 int agnc_cli_run_version(void)
 {
     printf("agnc %s\n", AGNC_VERSION_STRING);
     return 0;
 }
 
-/* Mencetak ringkasan perintah yang tersedia di Fase 0. */
 int agnc_cli_run_help(void)
 {
     printf("agnc - OpenClaude-compatible coding agent CLI (C)\n\n");
     printf("Usage:\n");
-    printf("  agnc --version          Show version\n");
-    printf("  agnc doctor             Check environment and dependencies\n");
-    printf("  agnc --help             Show this help\n");
+    printf("  agnc --version                 Show version\n");
+    printf("  agnc doctor                    Check environment and dependencies\n");
+    printf("  agnc --print \"your prompt\"     Run headless agent query (Phase 1)\n");
+    printf("  agnc --help                    Show this help\n");
     return 0;
 }

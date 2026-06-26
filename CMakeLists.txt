@@ -6,17 +6,22 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# Visual Studio Open Folder memakai preset x64-Debug dengan output di out/build/.
 if(CMAKE_GENERATOR MATCHES "Ninja" AND MSVC)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 
 include(cmake/CompilerWarnings.cmake)
+include(cmake/Dependencies.cmake)
 
 add_executable(agnc
     src/main.c
     src/cli/args.c
     src/cli/doctor.c
+    src/cli/print.c
+    src/config/config.c
+    src/engine/query.c
+    src/net/http.c
+    src/tools/read_file.c
     src/util/path.c
     src/util/status.c
 )
@@ -26,6 +31,7 @@ target_include_directories(agnc PRIVATE
 )
 
 agnc_set_compiler_warnings(agnc)
+agnc_link_dependencies(agnc)
 
 if(WIN32)
     target_compile_definitions(agnc PRIVATE AGNC_PLATFORM_WINDOWS=1)

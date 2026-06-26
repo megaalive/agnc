@@ -38,13 +38,22 @@ cmake --build --preset x64-Debug
 .\out\build\x64-Debug\agnc.exe doctor
 ```
 
-## Perintah Awal
+## Perintah Fase 1 (--print)
+
+1. Salin config dan pastikan API key tersedia (env atau `.keys/openrouter.txt`):
 
 ```powershell
-.\out\build\x64-Debug\agnc.exe --version
-.\out\build\x64-Debug\agnc.exe doctor
-.\out\build\x64-Debug\agnc.exe --help
+copy config\agnc.example.json $env:USERPROFILE\.agnc.json
 ```
+
+2. Jalankan query headless:
+
+```powershell
+.\out\build\x64-Debug\agnc.exe --print "Say hello in one sentence."
+.\out\build\x64-Debug\agnc.exe --print "Read README.md and summarize it."
+```
+
+Mode `--print` memakai OpenRouter (OpenAI-compatible), streaming SSE, dan tool `read_file`.
 
 ## Config
 

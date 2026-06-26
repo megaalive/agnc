@@ -80,7 +80,9 @@ Gunakan script yang sama dengan output Visual Studio:
 
 Output: `out/build/x64-Debug/agnc.exe`
 
-Script `build-vs.ps1` hanya alias ke `build.ps1`.
+Script ini memuat **VsDevShell** dan **vcpkg manifest** (`curl`, `yyjson`) otomatis.
+
+Saat pertama kali configure, vcpkg akan mengunduh dependency — tunggu sampai selesai.
 
 ## File Terkait
 

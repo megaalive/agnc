@@ -32,10 +32,14 @@ Write-Host "Using Visual Studio at: $vsPath"
 Write-Host "Preset: $preset"
 Write-Host "Output: $binary"
 
+$env:VCPKG_ROOT = Join-Path $vsPath "VC\vcpkg"
+$toolchain = Join-Path $env:VCPKG_ROOT "scripts\buildsystems\vcpkg.cmake"
+Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
+
 Push-Location $root
 try {
     & $devShell -Arch amd64 -SkipAutomaticLocation | Out-Null
-    & $cmake --preset $preset
+    & $cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain"
     & $cmake --build --preset $preset
 
     if (Test-Path $binary) {

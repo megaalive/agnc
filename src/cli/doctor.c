@@ -7,12 +7,16 @@
  */
 
 #include "agnc/cli.h"
+#include "agnc/config.h"
 #include "agnc/path.h"
 #include "agnc/status.h"
 #include "agnc/version.h"
 
+#include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include <yyjson.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -89,10 +93,31 @@ int agnc_cli_run_doctor(void)
         agnc_doctor_print_status("keys_dir", "missing", "optional for dev");
     }
 
-    /* Dependency berikut akan di-link di Fase 1 (spike OpenRouter). */
-    agnc_doctor_print_status("libcurl", "pending", "not linked yet (phase 1)");
-    agnc_doctor_print_status("yyjson", "pending", "not linked yet (phase 1)");
+    /* libcurl dan yyjson sudah di-link di Fase 1. */
+    agnc_doctor_print_status("libcurl", "ok", curl_version());
+    agnc_doctor_print_status("yyjson", "ok", YYJSON_VERSION_STRING);
     agnc_doctor_print_status("ripgrep", "pending", "optional until grep tool");
+
+    /* Validasi config bisa dimuat jika file ada. */
+    if (config_path != NULL && agnc_path_exists(config_path)) {
+        agnc_config_t config;
+        agnc_config_init(&config);
+        if (agnc_config_load(config_path, &config) == AGNC_STATUS_OK) {
+            agnc_doctor_print_status("config_load", "ok", config.model);
+        } else {
+            agnc_doctor_print_status("config_load", "error", "invalid config or missing API key env");
+        }
+        agnc_config_free(&config);
+    } else {
+        agnc_doctor_print_status("config_load", "skipped", "config file missing");
+    }
+
+    /* Cek env API key tanpa menampilkan nilainya. */
+    if (getenv("AGNC_API_KEY") != NULL) {
+        agnc_doctor_print_status("api_key_env", "ok", "present (value hidden)");
+    } else {
+        agnc_doctor_print_status("api_key_env", "missing", "set AGNC_API_KEY");
+    }
 
     /*
      * Cek binary ripgrep (`rg`) karena tool grep nanti akan spawn proses eksternal,
