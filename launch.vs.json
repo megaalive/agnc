@@ -1,0 +1,38 @@
+{
+  "version": "0.2.1",
+  "defaults": {
+    "project": "CMakeLists.txt",
+    "projectTarget": "agnc.exe",
+    "cwd": "${workspaceRoot}"
+  },
+  "configurations": [
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "agnc.exe",
+      "name": "agnc (default help)",
+      "args": []
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "agnc.exe",
+      "name": "agnc --version",
+      "args": [ "--version" ]
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "agnc.exe",
+      "name": "agnc doctor",
+      "args": [ "doctor" ]
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "agnc.exe",
+      "name": "agnc --help",
+      "args": [ "--help" ]
+    }
+  ]
+}

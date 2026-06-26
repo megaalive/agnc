@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "model": "anthropic/claude-sonnet-4",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "api_key_file": null
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "default_model": "anthropic/claude-sonnet-4"
+    }
+  },
+  "permissions": {
+    "mode": "default",
+    "always_allow": [],
+    "always_deny": [],
+    "always_ask": ["shell"]
+  },
+  "tools": {
+    "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob"]
+  },
+  "runtime": {
+    "max_tool_iterations": 25,
+    "stream": true,
+    "verbose": false
+  },
+  "paths": {
+    "sessions_dir": "~/.agnc/sessions",
+    "cache_dir": "~/.agnc/cache"
+  }
+}
