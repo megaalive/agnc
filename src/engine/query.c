@@ -522,8 +522,10 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
     if (config->enable_tools) {
         system_prompt =
             "You are a helpful coding assistant on Windows. "
-            "Use read_file, write_file, edit_file, grep, and glob for file work. "
-            "Use shell for directory listings with short commands like `dir` (avoid recursive -R). "
+            "For code/text search always use the grep tool (ripgrep), never shell findstr/find/grep. "
+            "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
+            "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
+            "Paths like src/ and README.md resolve from repo root even when cwd is a build subfolder. "
             "Match the user's language. Be concise; do not add filler intros before answers.";
     } else {
         system_prompt =

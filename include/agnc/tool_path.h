@@ -19,7 +19,7 @@ agnc_status_t agnc_tool_path_resolve(const char *path, char **resolved);
 
 /*
  * Pastikan path absolut berada di dalam workspace root.
- * Workspace = AGNC_WORKSPACE env, atau cwd saat ini.
+ * Workspace = AGNC_WORKSPACE env, repo root otomatis (.git / CMakeLists+src), atau cwd.
  */
 agnc_status_t agnc_tool_path_validate_workspace(const char *absolute_path);
 

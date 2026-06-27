@@ -75,11 +75,6 @@ static agnc_status_t agnc_grep_parse(const char *arguments_json, char **pattern_
     return AGNC_STATUS_OK;
 }
 
-static int agnc_grep_needs_escape(const char *text)
-{
-    return strchr(text, '"') != NULL || strchr(text, '\n') != NULL;
-}
-
 static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_path, char **result_text)
 {
     char *command;
@@ -90,18 +85,21 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
     size_t total = 0;
     size_t read_size;
     int truncated = 0;
+    int exit_hint = 0;
 
-    command_len = strlen(pattern) + strlen(search_path) + 128;
+    command_len = strlen(pattern) + strlen(search_path) + 160;
     command = (char *)malloc(command_len);
     if (command == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    if (agnc_grep_needs_escape(pattern)) {
-        snprintf(command, command_len, "rg --no-heading --line-number --max-count 200 \"%s\" \"%s\" 2>&1", pattern, search_path);
-    } else {
-        snprintf(command, command_len, "rg --no-heading --line-number --max-count 200 %s %s 2>&1", pattern, search_path);
-    }
+    /* Selalu quote pattern dan path agar aman di Windows (spasi, wildcard). */
+    snprintf(
+        command,
+        command_len,
+        "rg --no-heading --line-number --max-count 200 \"%s\" \"%s\" 2>&1",
+        pattern,
+        search_path);
 
 #ifdef _WIN32
     pipe = _popen(command, "rt");
@@ -150,9 +148,9 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
     }
 
 #ifdef _WIN32
-    _pclose(pipe);
+    exit_hint = _pclose(pipe);
 #else
-    pclose(pipe);
+    exit_hint = pclose(pipe);
 #endif
 
     output[total] = '\0';
@@ -161,6 +159,18 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
         free(output);
         *result_text = agnc_strdup_local("(no matches)");
         return AGNC_STATUS_OK;
+    }
+
+    /* rg menulis error ke stderr yang kita tangkap; beri tahu model jangan pakai shell. */
+    if (exit_hint != 0 && (strstr(output, "IO error") != NULL || strstr(output, "No such file") != NULL ||
+                           strstr(output, "cannot find") != NULL)) {
+        char *error_msg = (char *)malloc(total + 96);
+        if (error_msg != NULL) {
+            snprintf(error_msg, total + 96, "error: rg failed (do not use shell findstr): %s", output);
+            free(output);
+            *result_text = error_msg;
+            return AGNC_STATUS_TOOL_FAILED;
+        }
     }
 
     if (truncated) {

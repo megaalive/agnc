@@ -124,6 +124,7 @@ if(AGNC_BUILD_TESTS)
         src/tools/tool_path.c
         src/tools/write_file.c
         src/tools/edit_file.c
+        src/tools/grep.c
         src/util/atomic_write.c
     )
 

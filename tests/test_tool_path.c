@@ -101,12 +101,25 @@ static void test_write_and_edit_roundtrip(void **state)
     remove("../../../../agnc_fase2_test.txt");
 }
 
+static void test_grep_finds_in_src(void **state)
+{
+    const char *json = "{\"pattern\":\"agnc_query_print\",\"path\":\"src\"}";
+    char *result = NULL;
+    (void)state;
+
+    assert_int_equal(agnc_tool_grep_execute(json, &result), AGNC_STATUS_OK);
+    assert_non_null(result);
+    assert_true(strstr(result, "agnc_query") != NULL);
+    free(result);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_path_rejects_dotdot),
         cmocka_unit_test(test_path_validate_workspace),
         cmocka_unit_test(test_write_and_edit_roundtrip),
+        cmocka_unit_test(test_grep_finds_in_src),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

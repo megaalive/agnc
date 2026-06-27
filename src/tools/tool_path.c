@@ -2,7 +2,7 @@
  * tool_path.c
  *
  * Resolusi path tool dengan fallback dari subfolder build,
- * plus validasi agar operasi file tidak keluar workspace.
+ * deteksi repo root otomatis, plus validasi workspace.
  */
 
 #include "agnc/tool_path.h"
@@ -32,23 +32,6 @@ static char *agnc_strdup_local(const char *value)
 #endif
 }
 
-static char *agnc_tool_path_get_workspace(void)
-{
-    const char *env_workspace;
-    char buffer[PATH_MAX];
-
-    env_workspace = getenv("AGNC_WORKSPACE");
-    if (env_workspace != NULL && env_workspace[0] != '\0') {
-        return agnc_strdup_local(env_workspace);
-    }
-
-    if (getcwd(buffer, sizeof(buffer)) == NULL) {
-        return NULL;
-    }
-
-    return agnc_strdup_local(buffer);
-}
-
 #ifdef _WIN32
 static void agnc_tool_path_normalize_slashes(char *path)
 {
@@ -65,6 +48,29 @@ static void agnc_tool_path_normalize_slashes(char *path)
     }
 }
 
+static int agnc_tool_path_exists(const char *path)
+{
+    DWORD attributes;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    attributes = GetFileAttributesA(path);
+    return attributes != INVALID_FILE_ATTRIBUTES;
+}
+#else
+static int agnc_tool_path_exists(const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    return access(path, F_OK) == 0;
+}
+#endif
+
+#ifdef _WIN32
 static int agnc_tool_path_prefix_match(const char *prefix, const char *path)
 {
     size_t prefix_len;
@@ -134,7 +140,6 @@ static agnc_status_t agnc_tool_path_to_absolute(const char *path, char **absolut
 
     resolved = realpath(path, NULL);
     if (resolved == NULL) {
-        /* File belum ada (mis. write_file); bangun path absolut dari cwd. */
         char cwd[PATH_MAX];
         char combined[PATH_MAX * 2];
 
@@ -157,6 +162,111 @@ static agnc_status_t agnc_tool_path_to_absolute(const char *path, char **absolut
 }
 #endif
 
+/* Naik satu level direktori; return 0 jika sudah di root. */
+static int agnc_tool_path_pop_parent(char *path)
+{
+    size_t length;
+    char *separator;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    length = strlen(path);
+    while (length > 0 && (path[length - 1] == '/' || path[length - 1] == '\\')) {
+        path[length - 1] = '\0';
+        length--;
+    }
+
+    separator = strrchr(path, '/');
+#ifdef _WIN32
+    {
+        char *backslash = strrchr(path, '\\');
+        if (backslash != NULL && (separator == NULL || backslash > separator)) {
+            separator = backslash;
+        }
+    }
+#endif
+
+    if (separator == NULL) {
+        return 0;
+    }
+
+    if (separator == path) {
+        return 0;
+    }
+
+#ifdef _WIN32
+    if (path[1] == ':' && separator <= path + 2) {
+        return 0;
+    }
+#endif
+
+    *separator = '\0';
+    return 1;
+}
+
+/*
+ * Cari root repo dengan marker .git atau pasangan CMakeLists.txt + src/.
+ * Penting saat agnc dijalankan dari out/build/x64-Debug.
+ */
+static char *agnc_tool_path_find_repo_root(const char *start_dir)
+{
+    char current[PATH_MAX];
+    char marker_git[PATH_MAX];
+    char marker_cmake[PATH_MAX];
+    char marker_src[PATH_MAX];
+    size_t depth;
+
+    if (start_dir == NULL || start_dir[0] == '\0') {
+        return NULL;
+    }
+
+    snprintf(current, sizeof(current), "%s", start_dir);
+
+    for (depth = 0; depth < 12; depth++) {
+        snprintf(marker_git, sizeof(marker_git), "%s/.git", current);
+        if (agnc_tool_path_exists(marker_git)) {
+            return agnc_strdup_local(current);
+        }
+
+        snprintf(marker_cmake, sizeof(marker_cmake), "%s/CMakeLists.txt", current);
+        snprintf(marker_src, sizeof(marker_src), "%s/src", current);
+        if (agnc_tool_path_exists(marker_cmake) && agnc_tool_path_exists(marker_src)) {
+            return agnc_strdup_local(current);
+        }
+
+        if (!agnc_tool_path_pop_parent(current)) {
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+static char *agnc_tool_path_get_workspace(void)
+{
+    const char *env_workspace;
+    char buffer[PATH_MAX];
+    char *repo_root;
+
+    env_workspace = getenv("AGNC_WORKSPACE");
+    if (env_workspace != NULL && env_workspace[0] != '\0') {
+        return agnc_strdup_local(env_workspace);
+    }
+
+    if (getcwd(buffer, sizeof(buffer)) == NULL) {
+        return NULL;
+    }
+
+    repo_root = agnc_tool_path_find_repo_root(buffer);
+    if (repo_root != NULL) {
+        return repo_root;
+    }
+
+    return agnc_strdup_local(buffer);
+}
+
 agnc_status_t agnc_tool_path_resolve(const char *path, char **resolved)
 {
     static const char *prefixes[] = {
@@ -168,6 +278,7 @@ agnc_status_t agnc_tool_path_resolve(const char *path, char **resolved)
         "../../../../../../",
     };
     char candidate[PATH_MAX * 2];
+    char *fallback = NULL;
     agnc_status_t status;
     size_t index;
 
@@ -175,17 +286,43 @@ agnc_status_t agnc_tool_path_resolve(const char *path, char **resolved)
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
+    *resolved = NULL;
+
     /* Tolak path dengan komponen .. eksplisit sebelum resolve. */
     if (strstr(path, "..") != NULL) {
         return AGNC_STATUS_TOOL_DENIED;
     }
 
+    /*
+     * Coba beberapa prefix parent; pilih path pertama yang benar-benar ada
+     * (_fullpath di Windows sukses meski file/folder belum ada).
+     */
     for (index = 0; index < sizeof(prefixes) / sizeof(prefixes[0]); index++) {
+        char *absolute = NULL;
+
         snprintf(candidate, sizeof(candidate), "%s%s", prefixes[index], path);
-        status = agnc_tool_path_to_absolute(candidate, resolved);
-        if (status == AGNC_STATUS_OK) {
-            return status;
+        status = agnc_tool_path_to_absolute(candidate, &absolute);
+        if (status != AGNC_STATUS_OK) {
+            continue;
         }
+
+        if (agnc_tool_path_exists(absolute)) {
+            free(fallback);
+            *resolved = absolute;
+            return AGNC_STATUS_OK;
+        }
+
+        /* Simpan kandidat paling dangkal untuk file baru yang belum ada. */
+        if (fallback == NULL) {
+            fallback = absolute;
+        } else {
+            free(absolute);
+        }
+    }
+
+    if (fallback != NULL) {
+        *resolved = fallback;
+        return AGNC_STATUS_OK;
     }
 
     return AGNC_STATUS_IO_ERROR;
