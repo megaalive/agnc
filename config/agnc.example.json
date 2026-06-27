@@ -42,7 +42,31 @@
     "mode": "default",
     "always_allow": [],
     "always_deny": [],
-    "always_ask": ["shell", "write_file", "edit_file"]
+    "always_ask": ["shell", "write_file", "edit_file", "mcp"]
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "workspace-fs",
+        "enabled": true,
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "D:/_2025/Gits/megaalive/agnc"
+        ],
+        "cwd": null,
+        "env": {}
+      },
+      {
+        "id": "second-server",
+        "enabled": false,
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        "cwd": null,
+        "env": {}
+      }
+    ]
   },
   "tools": {
     "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob"]

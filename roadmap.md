@@ -810,6 +810,17 @@ Status: **selesai** (Windows-first, 2026-06).
 - Permission gate berlaku untuk MCP.
 - Error MCP tidak membuat query loop crash.
 
+### 11.7 Utang terbuka (bukan blocker Fase 5)
+
+| Item | Fase roadmap | Status | Rencana |
+| --- | --- | --- | --- |
+| Line editing REPL (`fgets`) | 4 task | Belum | Tunda → Fase 6 atau setelah MCP stabil |
+| `todo_write` tool | 3 §8.3 | Belum | Tunda → Fase 6 / slot kecil |
+| `web_fetch` tool | 4 §8.3 | Belum | Tunda (keputusan: setelah Fase 5) |
+| `ripgrep` di PATH dev | 2 doctor | Lingkungan | Pasang `rg` di mesin dev; `grep` tool butuh binary |
+
+Progress Fase 5: **B1** JSON-RPC (`src/mcp/jsonrpc.c`, `test_mcp_jsonrpc`) — selesai saat test lulus.
+
 ## 12. Roadmap Fase
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
@@ -902,14 +913,53 @@ Exit criteria: Fase 4 Acceptance terpenuhi.
 
 Tujuan: membuka integrasi tool eksternal.
 
+**Keputusan dikunci (2026-06):**
+
+| Topik | Keputusan |
+| --- | --- |
+| Server dev pertama | **Filesystem lokal** — `@modelcontextprotocol/server-filesystem` via stdio |
+| Debt Fase 4 | **Tunda** `web_fetch` dan line editing REPL |
+| Config | **Multi-server** dari hari pertama (`mcp.servers[]`); implementasi bertahap per server |
+
+**Skema config (v1):**
+
+```json
+"mcp": {
+  "servers": [
+    {
+      "id": "workspace-fs",
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/path/to/workspace"],
+      "cwd": null,
+      "env": {}
+    }
+  ]
+}
+```
+
+Tool MCP diekspos ke model dengan prefix `mcp_<id>_<tool>` (mis. `mcp_workspace-fs_read_file`).
+
 Tasks:
 
 - Implement JSON-RPC client.
-- Implement MCP stdio transport.
-- List tools dari MCP server.
-- Convert MCP tool schema ke internal registry.
-- Call MCP tool.
-- Tambahkan permission gate MCP.
+- Implement MCP stdio transport (spawn + newline-framed JSON).
+- Handshake `initialize` / `notifications/initialized`.
+- `tools/list` dan `tools/call` per server aktif.
+- Convert MCP `inputSchema` ke OpenAI tool schema (subset §8.2).
+- Gabungkan MCP tools ke registry runtime di `query.c`.
+- Permission gate MCP (`always_ask` + prompt REPL).
+- Server dev: filesystem lokal; uji multi-server dengan ≥2 entri config (satu disabled).
+
+**Milestone implementasi:**
+
+| # | Deliverable | File utama |
+| --- | --- | --- |
+| B1 | JSON-RPC parse/serialize + test fixture | `src/mcp/jsonrpc.c`, `tests/test_mcp_jsonrpc.c` |
+| B2 | Stdio transport + spawn proses Windows | `src/mcp/stdio_transport.c`, `src/mcp/process_win32.c` |
+| B3 | MCP session (initialize, tools/list, tools/call) | `src/mcp/client.c`, mock server di `tests/fixtures/` |
+| B4 | Config loader `mcp.servers[]` + multi-server manager | `src/config/config.c`, `src/mcp/registry.c` |
+| B5 | Wire agent loop + permission + doctor | `query.c`, `permissions.c`, `doctor.c` |
 
 Exit criteria: Fase 5 Acceptance terpenuhi.
 

@@ -221,4 +221,19 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_session)
 
     add_test(NAME test_session COMMAND test_session)
+
+    add_executable(test_mcp_jsonrpc
+        tests/test_mcp_jsonrpc.c
+        src/mcp/jsonrpc.c
+        src/util/status.c
+    )
+
+    target_include_directories(test_mcp_jsonrpc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_mcp_jsonrpc PRIVATE yyjson::yyjson cmocka::cmocka)
+    agnc_set_compiler_warnings(test_mcp_jsonrpc)
+
+    add_test(NAME test_mcp_jsonrpc COMMAND test_mcp_jsonrpc)
 endif()

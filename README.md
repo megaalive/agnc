@@ -109,6 +109,8 @@ Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
 
 Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`).
 
+**Dependency opsional:** tool `grep` membutuhkan [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) di PATH. Pasang lewat `winget install BurntSushi.ripgrep.MSVC` atau `scoop install ripgrep`, lalu cek dengan `agnc doctor`.
+
 ## Unit test
 
 ```powershell
