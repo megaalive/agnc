@@ -5,6 +5,7 @@
  */
 
 #include "agnc/ctags_locate.h"
+#include "agnc/path.h"
 #include "agnc/rg_locate.h"
 #include "agnc/tool.h"
 #include "agnc/tool_path.h"
@@ -138,6 +139,28 @@ static void test_find_symbol_finds_query_run(void **state)
     agnc_find_symbol_index_invalidate();
 }
 
+static void test_operator_read_allows_agnc_config(void **state)
+{
+    char *config_path = NULL;
+    (void)state;
+
+    assert_int_equal(agnc_path_default_config(&config_path), AGNC_STATUS_OK);
+    assert_non_null(config_path);
+    assert_true(agnc_tool_path_is_operator_read(config_path));
+    free(config_path);
+}
+
+static void test_operator_read_rejects_system_path(void **state)
+{
+    (void)state;
+
+#ifdef _WIN32
+    assert_false(agnc_tool_path_is_operator_read("C:\\Windows\\System32\\drivers\\etc\\hosts"));
+#else
+    assert_false(agnc_tool_path_is_operator_read("/etc/passwd"));
+#endif
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -146,6 +169,8 @@ int main(void)
         cmocka_unit_test(test_write_and_edit_roundtrip),
         cmocka_unit_test(test_grep_finds_in_src),
         cmocka_unit_test(test_find_symbol_finds_query_run),
+        cmocka_unit_test(test_operator_read_allows_agnc_config),
+        cmocka_unit_test(test_operator_read_rejects_system_path),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

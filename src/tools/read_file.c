@@ -6,6 +6,8 @@
  */
 
 #include "agnc/status.h"
+#include "agnc/path.h"
+#include "agnc/tool_path.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,6 +124,73 @@ static FILE *agnc_open_file_with_fallback(const char *path)
     return file;
 }
 
+static int agnc_read_file_path_is_absolute(const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+#ifdef _WIN32
+    if (path[1] == ':') {
+        return 1;
+    }
+#endif
+
+    return path[0] == '/' || path[0] == '\\';
+}
+
+static FILE *agnc_read_file_open_resolved(const char *path, agnc_status_t *status_out)
+{
+    char *expanded = NULL;
+    char *resolved = NULL;
+    FILE *file = NULL;
+    agnc_status_t status;
+
+    if (status_out != NULL) {
+        *status_out = AGNC_STATUS_OK;
+    }
+
+    status = agnc_path_expand_user(path, &expanded);
+    if (status != AGNC_STATUS_OK || expanded == NULL) {
+        if (status_out != NULL) {
+            *status_out = status;
+        }
+        free(expanded);
+        return NULL;
+    }
+
+    if (agnc_read_file_path_is_absolute(expanded)) {
+        status = agnc_tool_path_resolve(expanded, &resolved);
+        if (status != AGNC_STATUS_OK || resolved == NULL) {
+            if (status_out != NULL) {
+                *status_out = status;
+            }
+            free(expanded);
+            free(resolved);
+            return NULL;
+        }
+
+        if (agnc_tool_path_validate_workspace(resolved) != AGNC_STATUS_OK &&
+            !agnc_tool_path_is_operator_read(resolved)) {
+            if (status_out != NULL) {
+                *status_out = AGNC_STATUS_TOOL_DENIED;
+            }
+            free(expanded);
+            free(resolved);
+            return NULL;
+        }
+
+        file = fopen(resolved, "rb");
+        free(expanded);
+        free(resolved);
+        return file;
+    }
+
+    file = agnc_open_file_with_fallback(expanded);
+    free(expanded);
+    return file;
+}
+
 agnc_status_t agnc_tool_read_file_execute(const char *arguments_json, char **result_text)
 {
     yyjson_doc *doc;
@@ -133,6 +202,7 @@ agnc_status_t agnc_tool_read_file_execute(const char *arguments_json, char **res
     long file_size;
     char *buffer;
     size_t read_size;
+    agnc_status_t status;
 
     if (arguments_json == NULL || result_text == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -164,7 +234,15 @@ agnc_status_t agnc_tool_read_file_execute(const char *arguments_json, char **res
         return AGNC_STATUS_TOOL_FAILED;
     }
 
-    file = agnc_open_file_with_fallback(path);
+    file = agnc_read_file_open_resolved(path, &status);
+    if (status == AGNC_STATUS_TOOL_DENIED) {
+        yyjson_doc_free(doc);
+        free(owned_path);
+        *result_text = agnc_strdup_local(
+            "error: path outside workspace (agnc config: use read_file on global config path from system prompt)");
+        return AGNC_STATUS_TOOL_DENIED;
+    }
+
     if (file == NULL) {
         yyjson_doc_free(doc);
         free(owned_path);

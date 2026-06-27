@@ -29,4 +29,10 @@ agnc_status_t agnc_tool_path_workspace_root(char **root);
 /* Resolve path pencarian grep/glob; default "." -> src jika ada, else repo root. */
 agnc_status_t agnc_tool_path_resolve_search(const char *path, char **resolved);
 
+/*
+ * Return 1 jika path absolut boleh dibaca read_file walau di luar tool workspace
+ * (file di ~/.agnc/ atau ~/.agnc.json untuk diagnosa agnc).
+ */
+int agnc_tool_path_is_operator_read(const char *absolute_path);
+
 #endif

@@ -56,6 +56,12 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `--print --yes "Find symbol agnc_query_run in src using find_symbol tool"` — definisi di `query.c`
 - [ ] Panggil `grep` dua kali dengan argumen sama — hasil identik (cache sesi; cek via verbose log tidak re-spawn rg)
 
+## Agent product context (Fase 6.11a)
+
+- [ ] `agnc doctor` — baris `tool_workspace` menampilkan root aktif
+- [ ] `/help` — bagian "Workspace dan config agnc" tampil
+- [ ] `--print --yes "Where is agnc global config and how do I change workspace?"` — jawaban merujuk `~/.agnc.json` dan `AGNC_WORKSPACE`, bukan Claude Desktop
+
 ## Catatan
 
 - Test provider live (OpenRouter/Gemini) bersifat opsional; set `AGNC_TEST_LIVE_OPENROUTER=1` hanya saat regression eksplisit.

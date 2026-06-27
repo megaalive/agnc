@@ -118,6 +118,11 @@ static void agnc_repl_print_help(void)
     printf("  /session delete <nama>  Hapus file sesi dari disk\n");
     printf("  /doctor            Jalankan health check\n");
     printf("  /exit, /quit       Keluar\n");
+    printf("\nWorkspace dan config agnc:\n");
+    printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
+    printf("  Pindah workspace: set AGNC_WORKSPACE + restart agnc, atau cd ke repo lain lalu jalankan agnc.\n");
+    printf("  Config global = ~/.agnc.json (di luar repo); sesi = ~/.agnc/sessions/*.sqlite.\n");
+    printf("  Root MCP filesystem = mcp.servers[].args di config; setelah edit config: /mcp reconnect.\n");
     printf("\nCtrl+C saat request berjalan membatalkan tanpa keluar REPL.\n");
     printf("  user      HH:MM:SS + teks (hijau)\n");
     printf("  asisten   HH:MM:SS + jawaban (default; nama file abu-abu)\n");

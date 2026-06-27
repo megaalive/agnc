@@ -7,6 +7,8 @@
 
 #include "agnc/tool_path.h"
 
+#include "agnc/path.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -396,4 +398,63 @@ agnc_status_t agnc_tool_path_resolve_search(const char *path, char **resolved)
 
     free(src_path);
     return agnc_tool_path_workspace_root(resolved);
+}
+
+#ifdef _WIN32
+static int agnc_tool_path_same_file(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    return _stricmp(left, right) == 0;
+}
+#else
+static int agnc_tool_path_same_file(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    return strcmp(left, right) == 0;
+}
+#endif
+
+int agnc_tool_path_is_operator_read(const char *absolute_path)
+{
+    char *config_path = NULL;
+    char *agnc_dir = NULL;
+    char *path_abs = NULL;
+    char *dir_abs = NULL;
+    char *config_abs = NULL;
+    int allowed = 0;
+
+    if (absolute_path == NULL || absolute_path[0] == '\0') {
+        return 0;
+    }
+
+    if (agnc_tool_path_to_absolute(absolute_path, &path_abs) != AGNC_STATUS_OK) {
+        return 0;
+    }
+
+    if (agnc_path_default_config(&config_path) == AGNC_STATUS_OK && config_path != NULL) {
+        if (agnc_tool_path_to_absolute(config_path, &config_abs) == AGNC_STATUS_OK &&
+            agnc_tool_path_same_file(config_abs, path_abs)) {
+            allowed = 1;
+        }
+    }
+
+    if (!allowed && agnc_path_expand_user("~/.agnc", &agnc_dir) == AGNC_STATUS_OK && agnc_dir != NULL) {
+        if (agnc_tool_path_to_absolute(agnc_dir, &dir_abs) == AGNC_STATUS_OK &&
+            agnc_tool_path_prefix_match(dir_abs, path_abs)) {
+            allowed = 1;
+        }
+    }
+
+    free(config_path);
+    free(agnc_dir);
+    free(path_abs);
+    free(dir_abs);
+    free(config_abs);
+    return allowed;
 }

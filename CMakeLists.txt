@@ -161,6 +161,7 @@ if(AGNC_BUILD_TESTS)
         src/tools/rg_locate.c
         src/tools/ctags_locate.c
         src/tools/find_symbol.c
+        src/util/path.c
         src/util/atomic_write.c
     )
 

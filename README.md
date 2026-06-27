@@ -119,7 +119,9 @@ Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provid
 | `web_fetch` | ask | HTTP GET, hasil ditruncate |
 | `todo_write` | allow | Catat daftar todo sesi (in-memory) |
 
-Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`).
+Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`). Pengecualian: `read_file` boleh membaca config/sessions agnc di `~/.agnc.json` dan `~/.agnc/`.
+
+**Pindah workspace tool:** set `AGNC_WORKSPACE=<path>` lalu restart `agnc`, atau jalankan dari repo lain. **Root MCP** terpisah — edit `mcp.servers[].args` di `~/.agnc.json`, lalu `/mcp reconnect`.
 
 Aturan permission di `~/.agnc.json`: `always_ask`, `always_allow`, `always_deny` (subset: `shell`, `write_file`, `edit_file`, `mcp`, `web_fetch`). `always_deny` menang atas allow/ask.
 
@@ -168,4 +170,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.8** — session SQLite (1 sesi = 1 file): selesai
 - **Fase 6.9** — lazy load, append-only sync, windowed LLM context: selesai
 - **Fase 6.10** — cache tool, `find_symbol` (ctags), grep truncate: selesai
-- **Fase 6.11+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.11a** — agent product context (config/workspace di system prompt): selesai
+- **Fase 6.12+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)

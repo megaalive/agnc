@@ -14,6 +14,7 @@
 #include "agnc/rg_locate.h"
 #include "agnc/ctags_locate.h"
 #include "agnc/status.h"
+#include "agnc/tool_path.h"
 #include "agnc/version.h"
 
 #include <curl/curl.h>
@@ -105,6 +106,30 @@ int agnc_cli_run_doctor(void)
             agnc_doctor_print_status("ripgrep", "ok", rg_path);
         } else {
             agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+        }
+    }
+
+    /* Tool workspace (read_file/grep/glob) — terpisah dari root MCP. */
+    {
+        char *workspace_root = NULL;
+        const char *workspace_env = getenv("AGNC_WORKSPACE");
+
+        if (agnc_tool_path_workspace_root(&workspace_root) == AGNC_STATUS_OK && workspace_root != NULL) {
+            if (workspace_env != NULL && workspace_env[0] != '\0') {
+                char detail[512];
+                snprintf(
+                    detail,
+                    sizeof(detail),
+                    "%s (AGNC_WORKSPACE=%s)",
+                    workspace_root,
+                    workspace_env);
+                agnc_doctor_print_status("tool_workspace", "ok", detail);
+            } else {
+                agnc_doctor_print_status("tool_workspace", "ok", workspace_root);
+            }
+            free(workspace_root);
+        } else {
+            agnc_doctor_print_status("tool_workspace", "error", "cannot resolve workspace root");
         }
     }
 

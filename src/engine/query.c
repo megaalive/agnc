@@ -9,8 +9,10 @@
 #include "agnc/conversation.h"
 #include "agnc/net/http.h"
 #include "agnc/net/sse.h"
+#include "agnc/path.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
+#include "agnc/session.h"
 #include "agnc/status.h"
 #include "agnc/tool.h"
 #include "agnc/tool_cache.h"
@@ -1028,10 +1030,65 @@ const char *agnc_query_default_system_prompt(int enable_tools, int search_only)
            "Match the user's language. Be concise; do not invent file names or directory listings.";
 }
 
+/*
+ * Konteks produk agnc: host CLI, lokasi config/sessions, beda workspace tool vs MCP.
+ * Di-inject ke system prompt agar model tidak mengarang Claude Desktop / MCP host lain.
+ */
+static char *agnc_query_build_product_context(const char *workspace_root)
+{
+    char *config_path = NULL;
+    char *sessions_dir = NULL;
+    char *context = NULL;
+    size_t length;
+    const char *workspace_env = getenv("AGNC_WORKSPACE");
+    const char *workspace_label = workspace_root != NULL ? workspace_root : "(unknown)";
+
+    (void)agnc_path_default_config(&config_path);
+    (void)agnc_session_default_dir(&sessions_dir);
+
+    length = 1536;
+    if (config_path != NULL) {
+        length += strlen(config_path);
+    }
+    if (sessions_dir != NULL) {
+        length += strlen(sessions_dir);
+    }
+    if (workspace_label != NULL) {
+        length += strlen(workspace_label);
+    }
+
+    context = (char *)malloc(length);
+    if (context == NULL) {
+        free(config_path);
+        free(sessions_dir);
+        return NULL;
+    }
+
+    snprintf(
+        context,
+        length,
+        "Host: agnc CLI on Windows (not Claude Desktop, Cursor, or VS Code as MCP host). "
+        "Global config file: %s (outside repo workspace; read with read_file using this absolute path). "
+        "Session storage: %s (SQLite per session; active pointer in active.txt). "
+        "Tool workspace (read_file/grep/glob/write): %s%s. "
+        "To change tool workspace: set env AGNC_WORKSPACE to a directory and restart agnc, or run agnc from another repo root. "
+        "MCP filesystem roots are separate: edit mcp.servers[].args in global config, then /mcp reconnect in REPL. "
+        "Do not invent claude_desktop_config.json or host-app MCP paths unless the user names that product.",
+        config_path != NULL ? config_path : "~/.agnc.json",
+        sessions_dir != NULL ? sessions_dir : "~/.agnc/sessions",
+        workspace_label,
+        workspace_env != NULL && workspace_env[0] != '\0' ? " (AGNC_WORKSPACE override active)" : "");
+
+    free(config_path);
+    free(sessions_dir);
+    return context;
+}
+
 static char *agnc_query_build_system_prompt(int enable_tools, int search_only)
 {
     const char *base = agnc_query_default_system_prompt(enable_tools, search_only);
     char *workspace_root = NULL;
+    char *product_context = NULL;
     char *prompt = NULL;
     size_t length;
 
@@ -1043,21 +1100,25 @@ static char *agnc_query_build_system_prompt(int enable_tools, int search_only)
         return agnc_strdup_local(base);
     }
 
-    length = strlen(base) + strlen(workspace_root) + 128;
+    product_context = agnc_query_build_product_context(workspace_root);
+    length = strlen(base) + strlen(workspace_root) + (product_context != NULL ? strlen(product_context) : 0) + 192;
     prompt = (char *)malloc(length);
     if (prompt == NULL) {
         free(workspace_root);
+        free(product_context);
         return agnc_strdup_local(base);
     }
 
     snprintf(
         prompt,
         length,
-        "%s Workspace root: %s. For workspace-wide file counts use glob with path \".\"; "
+        "%s %s Workspace root: %s. For workspace-wide file counts use glob with path \".\"; "
         "use shell dir only when the user names a specific folder.",
         base,
+        product_context != NULL ? product_context : "",
         workspace_root);
     free(workspace_root);
+    free(product_context);
     return prompt;
 }
 
