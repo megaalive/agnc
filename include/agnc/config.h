@@ -20,7 +20,12 @@ typedef struct {
     int enable_tools;
     int tool_read_file;
     int tool_shell;
+    int tool_write_file;
+    int tool_edit_file;
+    int tool_grep;
+    int tool_glob;
     int ask_shell_permission;
+    int ask_write_permission;
 } agnc_config_t;
 
 void agnc_config_init(agnc_config_t *config);

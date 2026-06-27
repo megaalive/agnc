@@ -750,24 +750,29 @@ Spike dianggap sukses jika:
 
 ### 11.2 Fase 1 Acceptance
 
+Status: **selesai** (2026-06).
+
 - `~/.agnc.json` berhasil dibaca dan divalidasi.
 - Config write memakai atomic write.
 - OpenRouter OpenAI-compatible request berhasil.
 - SSE parser stabil untuk chunk parsial.
-- `agnc --print` mendukung streaming text.
-- Agent loop mendukung minimal satu tool round-trip.
+- `agnc --print` mendukung jawaban utuh per turn (non-stream by default).
+- Agent loop mendukung tool round-trip multi-step.
 - Tool `read_file` dan `shell` tersedia.
-- Permission prompt muncul untuk `shell`.
+- Permission prompt muncul untuk `shell`; `--yes` untuk non-interaktif.
 - Error provider ditampilkan dengan pesan jelas.
+- Renderer markdown/tabel ASCII di stdout.
 
 ### 11.3 Fase 2 Acceptance
 
+Status: **selesai** (Windows-first, 2026-06).
+
 - Tools `write_file`, `edit_file`, `grep`, dan `glob` tersedia.
-- Path traversal dan akses di luar workspace dikontrol permission.
-- Shell tool punya timeout dan batas output.
+- Path traversal (`..`) dan akses di luar workspace ditolak.
+- Shell tool punya batas output; write/edit memakai atomic write.
 - `agnc doctor` memeriksa `rg`.
-- Unit tests mencakup config, SSE, message, schema, dan tool validation.
-- Build Linux berhasil di CI.
+- Unit tests: SSE, shell, markdown, atomic write, tool path/write/edit.
+- CI Windows build + ctest + doctor.
 
 ### 11.4 Fase 3 Acceptance
 

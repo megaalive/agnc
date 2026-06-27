@@ -24,6 +24,8 @@ const char *agnc_status_to_string(agnc_status_t status)
         return "http_error";
     case AGNC_STATUS_PROVIDER_ERROR:
         return "provider_error";
+    case AGNC_STATUS_TOOL_DENIED:
+        return "tool_denied";
     case AGNC_STATUS_TOOL_FAILED:
         return "tool_failed";
     default:

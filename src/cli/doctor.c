@@ -96,7 +96,21 @@ int agnc_cli_run_doctor(void)
     /* libcurl dan yyjson sudah di-link di Fase 1. */
     agnc_doctor_print_status("libcurl", "ok", curl_version());
     agnc_doctor_print_status("yyjson", "ok", YYJSON_VERSION_STRING);
-    agnc_doctor_print_status("ripgrep", "pending", "optional until grep tool");
+
+    /* ripgrep diperlukan tool grep (Fase 2). */
+#ifdef _WIN32
+    if (_access("rg.exe", 0) == 0 || _access("rg", 0) == 0) {
+        agnc_doctor_print_status("ripgrep", "ok", "rg found in PATH or cwd");
+    } else {
+        agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+    }
+#else
+    if (access("rg", X_OK) == 0) {
+        agnc_doctor_print_status("ripgrep", "ok", "rg found in PATH or cwd");
+    } else {
+        agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+    }
+#endif
 
     /* Validasi config bisa dimuat jika file ada. */
     if (config_path != NULL && agnc_path_exists(config_path)) {

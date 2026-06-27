@@ -1,7 +1,7 @@
 /*
  * print.c
  *
- * Subcommand headless --print untuk Fase 1 spike OpenRouter.
+ * Subcommand headless --print: muat config, terapkan override CLI, jalankan agent loop.
  */
 
 #include "agnc/cli.h"
@@ -40,10 +40,15 @@ int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve)
         config.enable_tools = 0;
         config.tool_read_file = 0;
         config.tool_shell = 0;
+        config.tool_write_file = 0;
+        config.tool_edit_file = 0;
+        config.tool_grep = 0;
+        config.tool_glob = 0;
     }
 
     if (auto_approve) {
         config.ask_shell_permission = 0;
+        config.ask_write_permission = 0;
     }
 
     status = agnc_query_print(&config, prompt);

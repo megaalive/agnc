@@ -38,33 +38,73 @@ cmake --build --preset x64-Debug
 .\out\build\x64-Debug\agnc.exe doctor
 ```
 
-## Perintah Fase 1 (--print)
+## Perintah CLI
 
-1. Salin config dan pastikan API key tersedia (env atau `.keys/openrouter.txt`):
+### Setup config
+
+Salin config dan pastikan API key tersedia (env atau `.keys/openrouter.txt`):
 
 ```powershell
 copy config\agnc.example.json $env:USERPROFILE\.agnc.json
+# set env: $env:AGNC_API_KEY = "sk-..."
 ```
 
-2. Jalankan query headless:
+### Mode headless `--print`
 
 ```powershell
-.\out\build\x64-Debug\agnc.exe --print "Say hello in one sentence."
+# Chat tanpa tool
+.\out\build\x64-Debug\agnc.exe --print --no-tools "Say hello."
+
+# Agent dengan tool (read, write, edit, grep, glob, shell)
 .\out\build\x64-Debug\agnc.exe --print "Read README.md and summarize it."
+
+# Shell non-interaktif (skip prompt permission)
+.\out\build\x64-Debug\agnc.exe --print --yes "gunakan shell: dir"
 ```
 
-Mode `--print` memakai OpenRouter (OpenAI-compatible), streaming SSE, dan tool `read_file`.
+| Flag | Keterangan |
+| --- | --- |
+| `--print "prompt"` | Query headless ke provider (OpenRouter) |
+| `--no-tools` | Chat tanpa tool schema |
+| `--yes` / `-y` | Setujui shell dan tulis/edit file otomatis |
+| `doctor` | Cek config, libcurl, yyjson, ripgrep |
+| `--version` | Tampilkan versi |
+
+### Tool yang tersedia (Fase 1–2)
+
+| Tool | Permission default | Catatan |
+| --- | --- | --- |
+| `read_file` | allow | Baca file teks (max 256 KB) |
+| `shell` | ask | PowerShell di Windows, output max 64 KB |
+| `write_file` | ask | Tulis atomik via temp+rename |
+| `edit_file` | ask | Ganti `old_string` unik → `new_string` |
+| `grep` | allow | Spawn `rg` (ripgrep), butuh di PATH |
+| `glob` | allow | Cari file by pola `*` / `?` |
+
+Path file divalidasi agar tidak keluar **workspace** (cwd atau `AGNC_WORKSPACE`).
+
+## Unit test
+
+```powershell
+ctest --test-dir out\build\x64-Debug -C Debug --output-on-failure
+```
 
 ## Config
 
-Salin contoh config ke home directory:
+File global: `%USERPROFILE%\.agnc.json` (contoh di `config/agnc.example.json`).
 
-```powershell
-copy config\agnc.example.json $env:USERPROFILE\.agnc.json
-```
+Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corrupt.
 
 ## Keamanan
 
-Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
+- Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
+- API key tidak pernah dicetak ke log atau stdout.
 
 Lihat `roadmap.md` untuk rencana implementasi lengkap.
+
+## Status fase
+
+- **Fase 0** — bootstrap, build, doctor: selesai
+- **Fase 1** — `--print`, OpenRouter, read_file, shell, SSE, renderer: selesai
+- **Fase 2** — write_file, edit_file, grep, glob, path safety: selesai (Windows-first)
+- **Fase 3+** — provider descriptor, REPL interaktif, MCP: rencana

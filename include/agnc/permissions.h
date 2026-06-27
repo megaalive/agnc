@@ -1,7 +1,7 @@
 /*
  * permissions.h
  *
- * Gate permission interaktif untuk tool berisiko (Fase 1: shell).
+ * Gate permission interaktif untuk tool berisiko (shell, tulis/edit file).
  */
 
 #ifndef AGNC_PERMISSIONS_H
@@ -11,5 +11,8 @@
 
 /* Tanya pengguna di stdin; *allowed = 1 jika diizinkan. */
 agnc_status_t agnc_permission_ask_shell(const char *command, int *allowed);
+
+/* Prompt tulis/edit file; operation = "write" atau "edit". */
+agnc_status_t agnc_permission_ask_file_write(const char *path, const char *operation, int *allowed);
 
 #endif

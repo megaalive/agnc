@@ -1,7 +1,7 @@
 ﻿/*
  * query.c
  *
- * Agent loop Fase 1: streaming OpenAI-compatible + eksekusi read_file dan shell.
+ * Agent loop: streaming OpenAI-compatible + eksekusi tool Fase 1–2.
  */
 
 #include "agnc/query.h"
@@ -137,6 +137,115 @@ static void agnc_append_read_file_tool(yyjson_mut_doc *doc, yyjson_mut_val *tool
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
+/* Helper generik: tambah property string ke object schema. */
+static void agnc_schema_add_string_prop(
+    yyjson_mut_doc *doc,
+    yyjson_mut_val *properties_obj,
+    const char *name,
+    const char *description)
+{
+    yyjson_mut_val *prop = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_val(doc, properties_obj, name, prop);
+    yyjson_mut_obj_add_str(doc, prop, "type", "string");
+    yyjson_mut_obj_add_str(doc, prop, "description", description);
+}
+
+static void agnc_append_write_file_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "write_file");
+    yyjson_mut_obj_add_str(doc, function_obj, "description", "Write text content to a file (creates or overwrites).");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "path", "Absolute or relative path to the file.");
+    agnc_schema_add_string_prop(doc, properties_obj, "content", "Full text content to write.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "path"));
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "content"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_edit_file_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "edit_file");
+    yyjson_mut_obj_add_str(
+        doc,
+        function_obj,
+        "description",
+        "Replace exactly one unique old_string occurrence with new_string in a file.");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "path", "Path to the file to edit.");
+    agnc_schema_add_string_prop(doc, properties_obj, "old_string", "Exact text to replace (must be unique).");
+    agnc_schema_add_string_prop(doc, properties_obj, "new_string", "Replacement text.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "path"));
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "old_string"));
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "new_string"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_grep_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "grep");
+    yyjson_mut_obj_add_str(doc, function_obj, "description", "Search file contents with ripgrep (rg).");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "pattern", "Regex or literal search pattern.");
+    agnc_schema_add_string_prop(doc, properties_obj, "path", "File or directory to search (default .).");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "pattern"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_glob_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "glob");
+    yyjson_mut_obj_add_str(doc, function_obj, "description", "Find files matching a glob pattern under a directory.");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "pattern", "Glob pattern such as *.c or **/*.h.");
+    agnc_schema_add_string_prop(doc, properties_obj, "path", "Directory to search (default .).");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "pattern"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
 static void agnc_append_shell_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
 {
     yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
@@ -225,6 +334,18 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_mes
         if (config->tool_shell) {
             agnc_append_shell_tool(doc, tools_arr);
         }
+        if (config->tool_write_file) {
+            agnc_append_write_file_tool(doc, tools_arr);
+        }
+        if (config->tool_edit_file) {
+            agnc_append_edit_file_tool(doc, tools_arr);
+        }
+        if (config->tool_grep) {
+            agnc_append_grep_tool(doc, tools_arr);
+        }
+        if (config->tool_glob) {
+            agnc_append_glob_tool(doc, tools_arr);
+        }
     }
 
     result = yyjson_mut_write(doc, 0, NULL);
@@ -264,6 +385,56 @@ static agnc_status_t agnc_execute_tool(
             }
         }
         return agnc_tool_shell_execute(tool_arguments, tool_result);
+    }
+
+    if (strcmp(tool_name, "write_file") == 0) {
+        const char *preview = agnc_tool_write_file_path_preview(tool_arguments);
+
+        fprintf(stderr, "agnc: [tool] write_file: %s\n", preview != NULL ? preview : "(empty)");
+
+        if (config->ask_write_permission) {
+            status = agnc_permission_ask_file_write(preview, "write", &allowed);
+            if (status != AGNC_STATUS_OK) {
+                return status;
+            }
+            if (!allowed) {
+                *tool_result = agnc_strdup_local("error: write denied by user");
+                return AGNC_STATUS_TOOL_FAILED;
+            }
+        }
+        return agnc_tool_write_file_execute(tool_arguments, tool_result);
+    }
+
+    if (strcmp(tool_name, "edit_file") == 0) {
+        const char *preview = agnc_tool_edit_file_path_preview(tool_arguments);
+
+        fprintf(stderr, "agnc: [tool] edit_file: %s\n", preview != NULL ? preview : "(empty)");
+
+        if (config->ask_write_permission) {
+            status = agnc_permission_ask_file_write(preview, "edit", &allowed);
+            if (status != AGNC_STATUS_OK) {
+                return status;
+            }
+            if (!allowed) {
+                *tool_result = agnc_strdup_local("error: edit denied by user");
+                return AGNC_STATUS_TOOL_FAILED;
+            }
+        }
+        return agnc_tool_edit_file_execute(tool_arguments, tool_result);
+    }
+
+    if (strcmp(tool_name, "grep") == 0) {
+        const char *preview = agnc_tool_grep_pattern_preview(tool_arguments);
+
+        fprintf(stderr, "agnc: [tool] grep: %s\n", preview != NULL ? preview : "(empty)");
+        return agnc_tool_grep_execute(tool_arguments, tool_result);
+    }
+
+    if (strcmp(tool_name, "glob") == 0) {
+        const char *preview = agnc_tool_glob_pattern_preview(tool_arguments);
+
+        fprintf(stderr, "agnc: [tool] glob: %s\n", preview != NULL ? preview : "(empty)");
+        return agnc_tool_glob_execute(tool_arguments, tool_result);
     }
 
     *tool_result = agnc_strdup_local("error: unsupported tool");
@@ -351,8 +522,8 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
     if (config->enable_tools) {
         system_prompt =
             "You are a helpful coding assistant on Windows. "
-            "Use read_file to read files. For directory listings use shell with short commands "
-            "like `dir` or `Get-ChildItem` (avoid recursive flags like -R). "
+            "Use read_file, write_file, edit_file, grep, and glob for file work. "
+            "Use shell for directory listings with short commands like `dir` (avoid recursive -R). "
             "Match the user's language. Be concise; do not add filler intros before answers.";
     } else {
         system_prompt =

@@ -211,7 +211,13 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
         if (enabled != NULL && yyjson_is_arr(enabled)) {
             config->tool_read_file = agnc_config_json_array_contains(enabled, "read_file");
             config->tool_shell = agnc_config_json_array_contains(enabled, "shell");
-            config->enable_tools = config->tool_read_file || config->tool_shell;
+            config->tool_write_file = agnc_config_json_array_contains(enabled, "write_file");
+            config->tool_edit_file = agnc_config_json_array_contains(enabled, "edit_file");
+            config->tool_grep = agnc_config_json_array_contains(enabled, "grep");
+            config->tool_glob = agnc_config_json_array_contains(enabled, "glob");
+            config->enable_tools = config->tool_read_file || config->tool_shell ||
+                                   config->tool_write_file || config->tool_edit_file ||
+                                   config->tool_grep || config->tool_glob;
         }
     }
 
@@ -220,6 +226,9 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
         always_ask = yyjson_obj_get(permissions, "always_ask");
         if (always_ask != NULL && yyjson_is_arr(always_ask)) {
             config->ask_shell_permission = agnc_config_json_array_contains(always_ask, "shell");
+            config->ask_write_permission =
+                agnc_config_json_array_contains(always_ask, "write_file") ||
+                agnc_config_json_array_contains(always_ask, "edit_file");
         }
     }
 }
@@ -236,7 +245,12 @@ void agnc_config_init(agnc_config_t *config)
     config->enable_tools = 1;
     config->tool_read_file = 1;
     config->tool_shell = 1;
+    config->tool_write_file = 1;
+    config->tool_edit_file = 1;
+    config->tool_grep = 1;
+    config->tool_glob = 1;
     config->ask_shell_permission = 1;
+    config->ask_write_permission = 1;
 }
 
 void agnc_config_free(agnc_config_t *config)

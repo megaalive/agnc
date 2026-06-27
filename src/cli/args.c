@@ -1,7 +1,8 @@
 /*
  * args.c
  *
- * Implementasi parser argumen CLI dan perintah dasar (--version, --help, --print).
+ * Parser argumen CLI dan subcommand dasar (--version, --help, --print).
+ * Flag --no-tools dan --yes bisa muncul sebelum atau sesudah --print.
  */
 
 #include "agnc/cli.h"

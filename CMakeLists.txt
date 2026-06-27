@@ -27,6 +27,11 @@ add_executable(agnc
     src/permissions/permissions.c
     src/tools/read_file.c
     src/tools/shell.c
+    src/tools/tool_path.c
+    src/tools/write_file.c
+    src/tools/edit_file.c
+    src/tools/grep.c
+    src/tools/glob.c
     src/util/atomic_write.c
     src/util/path.c
     src/util/status.c
@@ -113,4 +118,21 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_atomic_write)
 
     add_test(NAME test_atomic_write COMMAND test_atomic_write)
+
+    add_executable(test_tool_path
+        tests/test_tool_path.c
+        src/tools/tool_path.c
+        src/tools/write_file.c
+        src/tools/edit_file.c
+        src/util/atomic_write.c
+    )
+
+    target_include_directories(test_tool_path PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_tool_path PRIVATE yyjson::yyjson cmocka::cmocka)
+    agnc_set_compiler_warnings(test_tool_path)
+
+    add_test(NAME test_tool_path COMMAND test_tool_path)
 endif()

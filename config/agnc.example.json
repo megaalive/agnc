@@ -19,7 +19,7 @@
     "mode": "default",
     "always_allow": [],
     "always_deny": [],
-    "always_ask": ["shell"]
+    "always_ask": ["shell", "write_file", "edit_file"]
   },
   "tools": {
     "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob"]
