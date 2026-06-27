@@ -261,6 +261,65 @@ static agnc_status_t agnc_shell_run_powershell(const char *command, char **resul
 }
 #endif
 
+static void agnc_shell_copy_lower(const char *command, char *lower, size_t lower_size)
+{
+    size_t index;
+
+    if (command == NULL || lower == NULL || lower_size == 0) {
+        if (lower != NULL && lower_size > 0) {
+            lower[0] = '\0';
+        }
+        return;
+    }
+
+    for (index = 0; command[index] != '\0' && index + 1 < lower_size; index++) {
+        char ch = command[index];
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = (char)(ch - 'A' + 'a');
+        }
+        lower[index] = ch;
+    }
+    lower[index] = '\0';
+}
+
+int agnc_tool_shell_is_search_command(const char *command)
+{
+    char lower[1024];
+
+    if (command == NULL || command[0] == '\0') {
+        return 0;
+    }
+
+    agnc_shell_copy_lower(command, lower, sizeof(lower));
+
+    if (strstr(lower, "findstr") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "select-string") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, " grep") != NULL || strncmp(lower, "grep ", 5) == 0) {
+        return 1;
+    }
+    if (strstr(lower, " rg ") != NULL || strncmp(lower, "rg ", 3) == 0) {
+        return 1;
+    }
+    if (strstr(lower, "dir /s") != NULL || strstr(lower, "dir /b /s") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "get-childitem") != NULL && strstr(lower, "-recurse") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "gci ") != NULL && strstr(lower, "-r") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, " where ") != NULL && strstr(lower, "/r ") != NULL) {
+        return 1;
+    }
+
+    return 0;
+}
+
 agnc_status_t agnc_tool_shell_execute(const char *arguments_json, char **result_text)
 {
     char *command = NULL;
@@ -274,6 +333,14 @@ agnc_status_t agnc_tool_shell_execute(const char *arguments_json, char **result_
     status = agnc_shell_parse_command(arguments_json, &command);
     if (status != AGNC_STATUS_OK) {
         *result_text = agnc_strdup_local("error: missing command argument");
+        return AGNC_STATUS_TOOL_FAILED;
+    }
+
+    if (agnc_tool_shell_is_search_command(command)) {
+        free(command);
+        *result_text = agnc_strdup_local(
+            "error: shell search blocked; use the grep tool for text search or glob for file patterns. "
+            "Do not retry with findstr, find, or recursive dir.");
         return AGNC_STATUS_TOOL_FAILED;
     }
 

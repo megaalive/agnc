@@ -12,6 +12,8 @@
 agnc_status_t agnc_tool_read_file_execute(const char *arguments_json, char **result_text);
 agnc_status_t agnc_tool_shell_execute(const char *arguments_json, char **result_text);
 const char *agnc_tool_shell_command_preview(const char *arguments_json);
+/* Return 1 jika perintah shell adalah pencarian teks/file (harus pakai tool grep/glob). */
+int agnc_tool_shell_is_search_command(const char *command);
 
 agnc_status_t agnc_tool_write_file_execute(const char *arguments_json, char **result_text);
 const char *agnc_tool_write_file_path_preview(const char *arguments_json);

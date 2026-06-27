@@ -374,6 +374,12 @@ static agnc_status_t agnc_execute_tool(
 
         fprintf(stderr, "agnc: [tool] shell: %s\n", preview != NULL ? preview : "(empty)");
 
+        if (agnc_tool_shell_is_search_command(preview)) {
+            *tool_result = agnc_strdup_local(
+                "error: shell search blocked; use the grep tool for text search or glob for file patterns.");
+            return AGNC_STATUS_TOOL_FAILED;
+        }
+
         if (config->ask_shell_permission) {
             status = agnc_permission_ask_shell(agnc_tool_shell_command_preview(tool_arguments), &allowed);
             if (status != AGNC_STATUS_OK) {

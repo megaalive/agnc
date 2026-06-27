@@ -36,10 +36,28 @@ static void test_shell_truncates_large_output(void **state)
 #endif
 }
 
+static void test_shell_blocks_findstr(void **state)
+{
+    char *result = NULL;
+    agnc_status_t status;
+    (void)state;
+
+    assert_true(agnc_tool_shell_is_search_command("findstr /s /i agnc_query src\\*") != 0);
+    assert_true(agnc_tool_shell_is_search_command("Get-ChildItem -Recurse src") != 0);
+    assert_true(agnc_tool_shell_is_search_command("dir") == 0);
+
+    status = agnc_tool_shell_execute("{\"command\":\"findstr /s /i agnc_query src\\\\*\"}", &result);
+    assert_int_equal(status, AGNC_STATUS_TOOL_FAILED);
+    assert_non_null(result);
+    assert_non_null(strstr(result, "grep tool"));
+    free(result);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_shell_truncates_large_output),
+        cmocka_unit_test(test_shell_blocks_findstr),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

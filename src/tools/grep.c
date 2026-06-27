@@ -184,7 +184,21 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
         memcpy(output + keep, suffix, suffix_len + 1);
     }
 
-    *result_text = output;
+    {
+        static const char header[] = "grep results (complete; do not call shell findstr):\n";
+        size_t header_len = sizeof(header) - 1;
+        char *formatted;
+
+        formatted = (char *)malloc(header_len + total + 1);
+        if (formatted == NULL) {
+            *result_text = output;
+            return AGNC_STATUS_OK;
+        }
+        memcpy(formatted, header, header_len);
+        memcpy(formatted + header_len, output, total + 1);
+        free(output);
+        *result_text = formatted;
+    }
     return AGNC_STATUS_OK;
 }
 
