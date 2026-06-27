@@ -282,7 +282,9 @@ agnc/
 │   ├── main.c
 │   ├── cli/
 │   │   ├── args.c
+│   │   ├── console.c
 │   │   ├── doctor.c
+│   │   ├── line_edit.c
 │   │   ├── print.c
 │   │   └── repl.c
 │   ├── config/
@@ -822,7 +824,7 @@ Status: **selesai** (2026-06).
 | `web_fetch` tool | 4 §8.3 | **Selesai** (Fase 6.2) | `src/tools/web_fetch.c`, `test_web_fetch` |
 | `ripgrep` di PATH dev | 2 doctor | Lingkungan | Pasang `rg` di mesin dev; `grep` tool butuh binary |
 
-Progress Fase 5: **B1–B5** selesai; **B6** housekeeping + celah terdokumentasi — berikutnya (lihat §12.0).
+Progress Fase 5: **B1–B5** selesai; **B6** housekeeping selesai kecuali `mcp.servers[].env` (backlog).
 
 ### 11.8 Celah implementasi (Fase 6.1)
 
@@ -833,6 +835,16 @@ Progress Fase 5: **B1–B5** selesai; **B6** housekeeping + celah terdokumentasi
 | MCP reconnect tiap `agnc_query_run` | REPL lambat (terutama cold `npx`) | **Selesai** — `agnc_mcp_session_t` di REPL |
 | `--yes` tidak mencakup permission MCP | Headless/script harus pipe `y` manual | **Selesai** — `--yes` + `web_fetch` |
 | UTF-8 BOM di config | `config_load` gagal jika editor menulis BOM | **Selesai** — strip di `config.c` |
+
+### 11.9 Fase 6.4 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Modul `src/cli/console.c`: UTF-8 konsol, ANSI VT, blok chat ber-timestamp, spinner, log tool, prompt permission, baca `[y/N]` tanpa `fgets`.
+- Sesi input konsol Windows (`agnc_console_input_*`) dipakai bersama line edit dan prompt permission.
+- Line editing Windows: cursor, Backspace/Delete, Home/End, history 32 baris, paste clipboard, redraw multi-baris saat wrap.
+- Permission REPL: grant per kategori (shell, tulis/edit, MCP, web fetch) untuk sisa sesi dengan pesan sistem.
+- Unix: fallback `fgets` + history push di `line_edit.c`.
 
 ## 12. Roadmap Fase
 
@@ -845,9 +857,11 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **1. Housekeeping Fase 5** | Tandai §11.6 selesai; catat celah §11.8; rapikan milestone B6 di bawah | Roadmap selaras dengan kode; tidak ada acceptance Fase 5 yang menggantung |
 | **2. Stabilisasi MCP harian** (Fase 6.1) | Persist koneksi MCP per sesi REPL; parse `always_allow`; `--yes` untuk MCP | **Selesai** |
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
-| **4. Fitur besar** (Fase 6.3+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking; slot kecil `todo_write` | `todo_write` selesai; sisanya backlog |
+| **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
+| **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
+| **6. Fitur besar** (Fase 6.5+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking | backlog |
 
-**Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. `todo_write` dan item §11.7 lainnya masuk backlog 6.3+.
+**Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.5+.
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
 
@@ -994,7 +1008,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.3+** sebelum **6.1** dan **6.2** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.5+** sebelum **6.1**–**6.4** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1012,7 +1026,20 @@ Tasks:
 - Ganti `fgets` dengan line editing minimal (backspace, panjang baris, history 32 baris). — `src/cli/line_edit.c`
 - Implement `web_fetch` tool (HTTP GET, truncation, permission ask/allow). — `src/tools/web_fetch.c`, `test_web_fetch`
 
-#### Fase 6.3+ — Backlog fitur besar
+#### Fase 6.3 — Slot kecil — **selesai**
+
+- `todo_write` tool — `src/tools/todo_write.c`, `test_todo_write`
+
+#### Fase 6.4 — Konsol & REPL Windows — **selesai**
+
+Tasks:
+
+- Ekstrak modul konsol: UTF-8, VT, chat blocks, spinner, permission prompt, `read_yes_no`. — `src/cli/console.c`, `include/agnc/console.h`
+- Sesi input konsol mentah Windows untuk line edit + prompt `[y/N]` (hindari konflik `fgets`). — `agnc_console_input_*`
+- Perkaya line editing Windows: cursor, Delete, Home/End, history Up/Down, paste clipboard, redraw multi-baris. — `src/cli/line_edit.c`
+- Permission: grant per kategori untuk sisa sesi REPL + pesan sistem. — `src/permissions/permissions.c`
+
+#### Fase 6.5+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

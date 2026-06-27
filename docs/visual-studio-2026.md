@@ -135,6 +135,9 @@ Saat pertama kali configure, vcpkg akan mengunduh dependency — tunggu sampai s
 | `cmake/CompilerWarnings.cmake` | Warning level |
 | `include/agnc/export.h` | Makro `AGNC_API` untuk simbol CLI |
 | `include/agnc/cli.h` | Wrapper inline API CLI |
+| `src/cli/console.c` | UTF-8 konsol, ANSI VT, chat REPL, spinner, permission prompt |
+| `src/cli/line_edit.c` | Line editing REPL (Windows: input mentah + history; Unix: fgets) |
+| `src/cli/repl.c` | Loop REPL interaktif |
 
 ## Alternatif Tanpa Membuka IDE
 

@@ -43,4 +43,27 @@ void agnc_console_print_chat_tool(const char *text);
 void agnc_console_spinner_start(void);
 void agnc_console_spinner_stop(void);
 
+/* Baca jawaban [y/N] dari konsol (hindari fgets setelah line editing Windows). */
+void agnc_console_read_yes_no(int *allowed);
+
+#ifdef _WIN32
+/* Sesi input konsol mentah — satu API untuk REPL line edit dan prompt [y/N]. */
+typedef struct agnc_console_input_session {
+    void *in_handle;
+    void *out_handle;
+    unsigned long saved_mode;
+    int active;
+} agnc_console_input_session_t;
+
+void agnc_console_input_begin(agnc_console_input_session_t *session);
+void agnc_console_input_end(agnc_console_input_session_t *session);
+void agnc_console_input_prepare_repl(void);
+void agnc_console_input_echo_char(agnc_console_input_session_t *session, char ch);
+void agnc_console_input_echo_backspace(agnc_console_input_session_t *session);
+void agnc_console_input_echo_newline(agnc_console_input_session_t *session);
+int agnc_console_input_key_printable(unsigned long control_state, unsigned short vk, char ascii_char);
+int agnc_console_input_is_paste_key(unsigned long control_state, unsigned short vk, char ascii_char);
+size_t agnc_console_input_paste_clipboard(char *dest, size_t capacity);
+#endif
+
 #endif /* AGNC_CONSOLE_H */

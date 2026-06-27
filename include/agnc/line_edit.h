@@ -1,7 +1,7 @@
 /*
  * line_edit.h
  *
- * Input baris REPL dengan backspace dan history ringkas.
+ * Input baris REPL dengan cursor, backspace, dan history ringkas.
  */
 
 #ifndef AGNC_LINE_EDIT_H

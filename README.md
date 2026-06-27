@@ -70,9 +70,13 @@ Jalankan tanpa argumen untuk REPL chat dengan streaming:
 
 Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/doctor`, `/exit`.
 
+**Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, dan wrap multi-baris — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`) dan sesi input konsol (`src/cli/console.c`). Di Unix fallback ke `fgets` dengan history.
+
+**Tampilan REPL:** blok chat ber-timestamp, warna (user hijau, kode abu-abu, sistem dim), spinner saat menunggu model, log aktivitas tool, prompt izin tool terintegrasi.
+
 **Session:** satu riwayat aktif di `%USERPROFILE%\.agnc\sessions\current.json`. Sisa file `current.json.tmp.*` dari simpan terputus dibersihkan otomatis saat REPL dibuka. Riwayat yang terlalu panjang diringkas otomatis.
 
-Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
+Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
 ### Mode headless `--print`
 
@@ -85,6 +89,9 @@ Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
 
 # Shell non-interaktif (skip prompt permission)
 .\out\build\x64-Debug\agnc.exe --print --yes "gunakan shell: dir"
+
+# Agent dengan MCP (butuh mcp.servers di ~/.agnc.json)
+.\out\build\x64-Debug\agnc.exe --print --yes "list files in the repo root via MCP"
 ```
 
 | Flag | Keterangan |
@@ -92,11 +99,11 @@ Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
 | *(tanpa argumen)* | REPL interaktif dengan streaming |
 | `--print "prompt"` | Query headless ke provider |
 | `--no-tools` | Chat tanpa tool schema |
-| `--yes` / `-y` | Setujui shell dan tulis/edit file otomatis |
-| `doctor` | Cek config, libcurl, yyjson, ripgrep |
+| `--yes` / `-y` | Setujui otomatis: shell, tulis/edit file, MCP, `web_fetch` |
+| `doctor` | Cek config, libcurl, yyjson, ripgrep, koneksi MCP |
 | `--version` | Tampilkan versi |
 
-### Tool yang tersedia (Fase 1–2)
+### Tool bawaan
 
 | Tool | Permission default | Catatan |
 | --- | --- | --- |
@@ -106,8 +113,16 @@ Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
 | `edit_file` | ask | Ganti `old_string` unik → `new_string` |
 | `grep` | allow | Spawn `rg` (ripgrep), butuh di PATH |
 | `glob` | allow | Cari file by pola `*` / `?` |
+| `web_fetch` | ask | HTTP GET, hasil ditruncate |
+| `todo_write` | allow | Catat daftar todo sesi (in-memory) |
 
 Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`).
+
+Aturan permission di `~/.agnc.json`: `always_ask`, `always_allow`, `always_deny` (subset: `shell`, `write_file`, `edit_file`, `mcp`, `web_fetch`).
+
+### MCP (stdio)
+
+Aktifkan server di `mcp.servers[]` di config (lihat `config/agnc.example.json`). Tool diekspos ke model dengan prefix `mcp_<id>_<tool>` (mis. `mcp_workspace-fs_read_file`). Koneksi MCP dipertahankan sepanjang sesi REPL. `agnc doctor` memeriksa `mcp_config` dan `mcp_connect`.
 
 **Dependency opsional:** tool `grep` membutuhkan [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) di PATH. Pasang lewat `winget install BurntSushi.ripgrep.MSVC` atau `scoop install ripgrep`, lalu cek dengan `agnc doctor`.
 
@@ -137,4 +152,9 @@ Lihat `roadmap.md` untuk rencana implementasi.
 - **Fase 2** — write_file, edit_file, grep, glob, path safety: selesai (Windows-first)
 - **Fase 3** — provider descriptor, registry gateway, model discovery: selesai
 - **Fase 4** — REPL interaktif, streaming, slash commands, session persistence: selesai
-- **Fase 5+** — MCP stdio, web fetch: rencana
+- **Fase 5** — MCP stdio, multi-server, integrasi agent loop: selesai
+- **Fase 6.1** — persist MCP per sesi REPL, `always_allow`, `--yes` untuk MCP: selesai
+- **Fase 6.2** — line editing REPL, `web_fetch`: selesai
+- **Fase 6.3** — `todo_write`: selesai
+- **Fase 6.4** — modul konsol REPL Windows (input mentah, paste, permission terintegrasi): selesai
+- **Fase 6.5+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking: backlog (lihat `roadmap.md`)

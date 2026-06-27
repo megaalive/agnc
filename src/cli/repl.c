@@ -10,6 +10,7 @@
 #include "agnc/conversation.h"
 #include "agnc/line_edit.h"
 #include "agnc/mcp/session.h"
+#include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/session.h"
@@ -304,6 +305,7 @@ int agnc_cli_run_interactive(void)
 
     agnc_conversation_init(&conversation);
     agnc_mcp_session_init(&mcp_session);
+    agnc_permission_session_reset();
     status = agnc_session_current_path(&session_path);
     if (status == AGNC_STATUS_OK && session_path != NULL) {
         /* Sisa atomic write dari proses sebelumnya (current.json.tmp.*). */
@@ -342,7 +344,6 @@ int agnc_cli_run_interactive(void)
     }
 
     agnc_repl_install_cancel_handler();
-    agnc_repl_print_help();
     printf(">\n");
     fflush(stdout);
 

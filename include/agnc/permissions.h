@@ -9,6 +9,9 @@
 
 #include "agnc/status.h"
 
+/* Reset grant sesi (panggil saat REPL baru dimulai). */
+void agnc_permission_session_reset(void);
+
 /* Tanya pengguna di stdin; *allowed = 1 jika diizinkan. interactive_repl = mode chat agnc. */
 agnc_status_t agnc_permission_ask_shell(const char *command, int *allowed, int interactive_repl);
 
