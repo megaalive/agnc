@@ -39,6 +39,8 @@ Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 Push-Location $root
 try {
     & $devShell -Arch amd64 -SkipAutomaticLocation | Out-Null
+    Write-Host "Generating provider registry..."
+    python (Join-Path $root "scripts\generate_integrations.py")
     & $cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_MANIFEST_MODE=ON"
     & $cmake --build --preset $preset
 

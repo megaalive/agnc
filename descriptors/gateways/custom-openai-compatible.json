@@ -1,0 +1,27 @@
+{
+  "id": "custom-openai-compatible",
+  "label": "Custom OpenAI-compatible",
+  "category": "custom",
+  "default_base_url": "http://127.0.0.1:8080/v1",
+  "default_model": "gpt-4o-mini",
+  "setup": {
+    "requires_auth": false,
+    "auth_mode": "api-key",
+    "credential_env_vars": ["AGNC_API_KEY", "OPENAI_API_KEY"]
+  },
+  "transport": {
+    "kind": "openai-compatible",
+    "auth_header": {
+      "name": "Authorization",
+      "scheme": "bearer"
+    },
+    "endpoint_path": "/chat/completions",
+    "models_endpoint_path": "/models",
+    "supports_streaming": true,
+    "supports_tool_calls": true
+  },
+  "catalog": {
+    "source": "dynamic",
+    "models": []
+  }
+}

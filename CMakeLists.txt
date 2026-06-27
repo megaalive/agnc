@@ -16,6 +16,12 @@ endif()
 include(cmake/CompilerWarnings.cmake)
 include(cmake/Dependencies.cmake)
 
+set(AGNC_PROVIDER_SOURCES
+    generated/agnc_integrations_gen.c
+    src/integrations/registry.c
+    src/providers/provider.c
+)
+
 add_executable(agnc
     src/main.c
     src/cli/args.c
@@ -39,10 +45,12 @@ add_executable(agnc
     src/util/atomic_write.c
     src/util/path.c
     src/util/status.c
+    ${AGNC_PROVIDER_SOURCES}
 )
 
 target_include_directories(agnc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/generated
 )
 
 agnc_set_compiler_warnings(agnc)
@@ -117,9 +125,14 @@ if(AGNC_BUILD_TESTS)
 
     target_include_directories(test_atomic_write PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
     )
 
     target_link_libraries(test_atomic_write PRIVATE yyjson::yyjson cmocka::cmocka)
+    target_sources(test_atomic_write PRIVATE
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+    )
     agnc_set_compiler_warnings(test_atomic_write)
 
     add_test(NAME test_atomic_write COMMAND test_atomic_write)
@@ -142,4 +155,45 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_tool_path)
 
     add_test(NAME test_tool_path COMMAND test_tool_path)
+
+    add_executable(test_provider_registry
+        tests/test_provider_registry.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+        src/providers/provider.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_provider_registry PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_link_libraries(test_provider_registry PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    agnc_set_compiler_warnings(test_provider_registry)
+
+    add_test(NAME test_provider_registry COMMAND test_provider_registry)
+
+    add_executable(test_config_provider
+        tests/test_config_provider.c
+        src/config/config.c
+        src/util/path.c
+        src/util/status.c
+        src/util/atomic_write.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+        src/providers/provider.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_config_provider PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_compile_definitions(test_config_provider PRIVATE AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(test_config_provider PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    agnc_set_compiler_warnings(test_config_provider)
+
+    add_test(NAME test_config_provider COMMAND test_config_provider)
 endif()

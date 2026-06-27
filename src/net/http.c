@@ -200,7 +200,7 @@ agnc_status_t agnc_http_post_stream(
     char error_buffer[CURL_ERROR_SIZE];
     agnc_status_t result_status = AGNC_STATUS_OK;
 
-    if (url == NULL || auth_header == NULL || json_body == NULL) {
+    if (url == NULL || json_body == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
@@ -215,7 +215,9 @@ agnc_status_t agnc_http_post_stream(
     state.status = AGNC_STATUS_OK;
 
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, auth_header);
+    if (auth_header != NULL && auth_header[0] != '\0') {
+        headers = curl_slist_append(headers, auth_header);
+    }
     headers = curl_slist_append(headers, "Accept: text/event-stream");
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -256,4 +258,100 @@ agnc_status_t agnc_http_post_stream(
 
     free(state.response_body);
     return result_status;
+}
+
+typedef struct {
+    char *response_body;
+    size_t response_length;
+    size_t response_capacity;
+} agnc_http_get_state_t;
+
+static size_t agnc_http_get_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+    agnc_http_get_state_t *state = (agnc_http_get_state_t *)userdata;
+    size_t total = size * nmemb;
+    agnc_http_stream_state_t stream_state;
+
+    memset(&stream_state, 0, sizeof(stream_state));
+    stream_state.response_body = state->response_body;
+    stream_state.response_length = state->response_length;
+    stream_state.response_capacity = state->response_capacity;
+
+    if (agnc_http_append_body(&stream_state, ptr, total) != AGNC_STATUS_OK) {
+        return 0;
+    }
+
+    state->response_body = stream_state.response_body;
+    state->response_length = stream_state.response_length;
+    state->response_capacity = stream_state.response_capacity;
+    return total;
+}
+
+agnc_status_t agnc_http_get(
+    const char *url,
+    const char *auth_header,
+    char **response_body,
+    char **error_message)
+{
+    CURL *curl;
+    CURLcode code;
+    struct curl_slist *headers = NULL;
+    agnc_http_get_state_t state;
+    long http_code = 0;
+    char error_buffer[CURL_ERROR_SIZE];
+
+    if (url == NULL || response_body == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *response_body = NULL;
+    if (error_message != NULL) {
+        *error_message = NULL;
+    }
+
+    curl = curl_easy_init();
+    if (curl == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    memset(&state, 0, sizeof(state));
+
+    if (auth_header != NULL && auth_header[0] != '\0') {
+        headers = curl_slist_append(headers, auth_header);
+    }
+    headers = curl_slist_append(headers, "Accept: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, agnc_http_get_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &state);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+    code = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (code != CURLE_OK) {
+        if (error_message != NULL) {
+            *error_message = agnc_strdup_local(error_buffer);
+        }
+        free(state.response_body);
+        return AGNC_STATUS_HTTP_ERROR;
+    }
+
+    if (http_code < 200 || http_code >= 300) {
+        if (error_message != NULL) {
+            *error_message = agnc_http_format_status_error(http_code, state.response_body);
+        }
+        free(state.response_body);
+        return AGNC_STATUS_HTTP_ERROR;
+    }
+
+    *response_body = state.response_body;
+    return AGNC_STATUS_OK;
 }

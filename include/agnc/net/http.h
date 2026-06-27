@@ -21,4 +21,11 @@ agnc_status_t agnc_http_post_stream(
     void *user_data,
     char **error_message);
 
+/* GET sinkron; mengumpulkan body utuh (mis. /models discovery). */
+agnc_status_t agnc_http_get(
+    const char *url,
+    const char *auth_header,
+    char **response_body,
+    char **error_message);
+
 #endif

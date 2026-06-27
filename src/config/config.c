@@ -1,12 +1,13 @@
 /*
  * config.c
  *
- * Loader config JSON minimal untuk Fase 1 spike OpenRouter.
+ * Loader config JSON: runtime, tools, permissions, dan resolusi provider Fase 3.
  */
 
 #include "agnc/config.h"
 #include "agnc/atomic_write.h"
 #include "agnc/path.h"
+#include "agnc/provider.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -149,7 +150,237 @@ static char *agnc_config_get_env_fallbacks(void)
     return NULL;
 }
 
-/* Cari kunci dev lokal saat dijalankan dari subfolder build (mis. out/build/x64-Debug). */
+/* Forward decl: dipakai agnc_config_find_dev_api_key_for_gateway sebelum definisi. */
+static char *agnc_config_find_dev_api_key(void);
+
+static char *agnc_config_get_env_value(const char *env_name)
+{
+    return agnc_config_get_env_strict(env_name);
+}
+
+static char *agnc_config_pick_env_chain(const char *const *names, size_t count)
+{
+    size_t index;
+    char *value;
+
+    for (index = 0; index < count; index++) {
+        if (names[index] == NULL) {
+            continue;
+        }
+        value = agnc_config_get_env_strict(names[index]);
+        if (value != NULL) {
+            return value;
+        }
+    }
+
+    return NULL;
+}
+
+static char *agnc_config_find_dev_api_key_for_gateway(const char *gateway_id)
+{
+    char relative[128];
+    static const char *prefixes[] = {
+        "",
+        "../",
+        "../../",
+        "../../../",
+        "../../../../",
+        "../../../../../",
+    };
+    size_t index;
+
+    if (gateway_id == NULL || gateway_id[0] == '\0') {
+        return NULL;
+    }
+
+    for (index = 0; index < sizeof(prefixes) / sizeof(prefixes[0]); index++) {
+        char *key;
+
+        snprintf(relative, sizeof(relative), "%s.keys/%s.txt", prefixes[index], gateway_id);
+        if (!agnc_path_exists(relative)) {
+            continue;
+        }
+        key = agnc_config_read_api_key_from_file(relative);
+        if (key != NULL) {
+            return key;
+        }
+    }
+
+    if (strcmp(gateway_id, "openrouter") == 0) {
+        return agnc_config_find_dev_api_key();
+    }
+
+    return NULL;
+}
+
+static char *agnc_config_strdup_json_str(yyjson_val *value)
+{
+    if (value != NULL && yyjson_is_str(value)) {
+        return agnc_strdup_local(yyjson_get_str(value));
+    }
+    return NULL;
+}
+
+static char *agnc_config_pick_string(
+    const char *env_name,
+    const char *primary,
+    const char *secondary,
+    const char *fallback)
+{
+    char *value;
+
+    value = agnc_config_get_env_value(env_name);
+    if (value != NULL) {
+        return value;
+    }
+    if (primary != NULL && primary[0] != '\0') {
+        return agnc_strdup_local(primary);
+    }
+    if (secondary != NULL && secondary[0] != '\0') {
+        return agnc_strdup_local(secondary);
+    }
+    if (fallback != NULL && fallback[0] != '\0') {
+        return agnc_strdup_local(fallback);
+    }
+    return NULL;
+}
+
+/*
+ * Resolusi provider: provider.active + providers{} + descriptor gateway + env.
+ * Mengisi provider_id, gateway_id, base_url, model, api_key di config.
+ */
+static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_t *config)
+{
+    yyjson_val *provider_obj;
+    yyjson_val *providers_obj;
+    yyjson_val *entry;
+    yyjson_val *value;
+    const char *active;
+    const char *gateway_id;
+    const agnc_gateway_descriptor_t *gateway;
+    char *active_owned = NULL;
+
+    provider_obj = yyjson_obj_get(root, "provider");
+    providers_obj = yyjson_obj_get(root, "providers");
+    if (provider_obj == NULL) {
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    active = getenv("AGNC_PROVIDER");
+    if (active == NULL || active[0] == '\0') {
+        value = yyjson_obj_get(provider_obj, "active");
+        if (value != NULL && yyjson_is_str(value)) {
+            active = yyjson_get_str(value);
+        }
+    }
+    if (active == NULL || active[0] == '\0') {
+        active = "openrouter";
+    }
+
+    active_owned = agnc_strdup_local(active);
+    if (active_owned == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+    config->provider_id = active_owned;
+
+    entry = NULL;
+    if (providers_obj != NULL && yyjson_is_obj(providers_obj)) {
+        entry = yyjson_obj_get(providers_obj, active);
+    }
+
+    value = entry != NULL ? yyjson_obj_get(entry, "gateway") : NULL;
+    if (value != NULL && yyjson_is_str(value)) {
+        gateway_id = yyjson_get_str(value);
+    } else {
+        gateway_id = active;
+    }
+
+    config->gateway_id = agnc_strdup_local(gateway_id);
+    if (config->gateway_id == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    gateway = agnc_registry_find_gateway(config->gateway_id);
+    if (gateway == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    {
+        char *provider_base = agnc_config_strdup_json_str(yyjson_obj_get(provider_obj, "base_url"));
+        char *entry_base = agnc_config_strdup_json_str(yyjson_obj_get(entry, "base_url"));
+
+        config->base_url = agnc_config_pick_string(
+            "AGNC_BASE_URL", provider_base, entry_base, gateway->default_base_url);
+        free(provider_base);
+        free(entry_base);
+    }
+
+    {
+        char *provider_model = agnc_config_strdup_json_str(yyjson_obj_get(provider_obj, "model"));
+        char *entry_model = agnc_config_strdup_json_str(yyjson_obj_get(entry, "default_model"));
+
+        config->model = agnc_config_pick_string(
+            "AGNC_MODEL", provider_model, entry_model, gateway->default_model);
+        free(provider_model);
+        free(entry_model);
+    }
+
+    value = yyjson_obj_get(provider_obj, "api_key_file");
+    if (value != NULL && yyjson_is_str(value)) {
+        config->api_key = agnc_config_read_api_key_from_file(yyjson_get_str(value));
+    }
+
+    if (config->api_key == NULL && entry != NULL) {
+        value = yyjson_obj_get(entry, "api_key_env");
+        if (value != NULL && yyjson_is_str(value)) {
+            config->api_key = agnc_config_get_env_strict(yyjson_get_str(value));
+        }
+    }
+
+    if (config->api_key == NULL) {
+        value = yyjson_obj_get(provider_obj, "api_key_env");
+        if (value != NULL && yyjson_is_str(value)) {
+            config->api_key = agnc_config_get_env_strict(yyjson_get_str(value));
+        }
+    }
+
+    if (config->api_key == NULL && gateway->credential_env_vars != NULL) {
+        config->api_key = agnc_config_pick_env_chain(
+            gateway->credential_env_vars,
+            gateway->credential_env_count);
+    }
+
+    if (config->api_key == NULL) {
+        config->api_key = agnc_config_find_dev_api_key_for_gateway(config->gateway_id);
+    }
+
+    if (config->api_key == NULL) {
+        config->api_key = agnc_config_get_env_fallbacks();
+    }
+
+    if (!gateway->requires_auth && config->api_key == NULL) {
+        config->api_key = agnc_strdup_local("");
+        if (config->api_key == NULL) {
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+    }
+
+    if (config->model != NULL) {
+        const char *resolved = agnc_provider_resolve_api_model(gateway, config->model);
+        if (resolved != config->model) {
+            char *copy = agnc_strdup_local(resolved);
+            if (copy == NULL) {
+                return AGNC_STATUS_OUT_OF_MEMORY;
+            }
+            free(config->model);
+            config->model = copy;
+        }
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+/* Cari kunci dev lokal OpenRouter (legacy path .keys/openrouter.txt). */
 static char *agnc_config_find_dev_api_key(void)
 {
     static const char *candidates[] = {
@@ -262,9 +493,13 @@ void agnc_config_free(agnc_config_t *config)
     free(config->base_url);
     free(config->model);
     free(config->api_key);
+    free(config->provider_id);
+    free(config->gateway_id);
     config->base_url = NULL;
     config->model = NULL;
     config->api_key = NULL;
+    config->provider_id = NULL;
+    config->gateway_id = NULL;
 }
 
 agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
@@ -274,7 +509,6 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     char *json_text = NULL;
     yyjson_doc *doc = NULL;
     yyjson_val *root;
-    yyjson_val *provider;
     yyjson_val *runtime;
     yyjson_val *value;
     agnc_status_t status = AGNC_STATUS_OK;
@@ -308,49 +542,13 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     }
 
     root = yyjson_doc_get_root(doc);
-    provider = yyjson_obj_get(root, "provider");
     runtime = yyjson_obj_get(root, "runtime");
 
-    if (provider == NULL) {
+    status = agnc_config_resolve_provider(root, config);
+    if (status != AGNC_STATUS_OK) {
         yyjson_doc_free(doc);
-        return AGNC_STATUS_JSON_ERROR;
-    }
-
-    value = yyjson_obj_get(provider, "base_url");
-    if (value != NULL && yyjson_is_str(value)) {
-        config->base_url = agnc_strdup_local(yyjson_get_str(value));
-    }
-
-    value = yyjson_obj_get(provider, "model");
-    if (value != NULL && yyjson_is_str(value)) {
-        config->model = agnc_strdup_local(yyjson_get_str(value));
-    }
-
-    value = yyjson_obj_get(provider, "api_key_file");
-    if (value != NULL && yyjson_is_str(value)) {
-        config->api_key = agnc_config_read_api_key_from_file(yyjson_get_str(value));
-    }
-
-    /*
-     * Urutan resolusi API key:
-     * 1. api_key_file dari config
-     * 2. api_key_env (strict, tanpa fallback prematur)
-     * 3. .keys/openrouter.txt (cwd + parent, untuk dev dari out/build/...)
-     * 4. AGNC_API_KEY, lalu OPENROUTER_API_KEY
-     */
-    if (config->api_key == NULL) {
-        value = yyjson_obj_get(provider, "api_key_env");
-        if (value != NULL && yyjson_is_str(value)) {
-            config->api_key = agnc_config_get_env_strict(yyjson_get_str(value));
-        }
-    }
-
-    if (config->api_key == NULL) {
-        config->api_key = agnc_config_find_dev_api_key();
-    }
-
-    if (config->api_key == NULL) {
-        config->api_key = agnc_config_get_env_fallbacks();
+        agnc_config_free(config);
+        return status;
     }
 
     if (runtime != NULL) {
@@ -374,9 +572,18 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
 
     yyjson_doc_free(doc);
 
-    if (config->base_url == NULL || config->model == NULL || config->api_key == NULL) {
-        agnc_config_free(config);
-        return AGNC_STATUS_INVALID_ARGUMENT;
+    {
+        const agnc_gateway_descriptor_t *gateway = agnc_registry_find_gateway(config->gateway_id);
+
+        if (gateway == NULL || config->base_url == NULL || config->model == NULL) {
+            agnc_config_free(config);
+            return AGNC_STATUS_INVALID_ARGUMENT;
+        }
+
+        if (gateway->requires_auth && (config->api_key == NULL || config->api_key[0] == '\0')) {
+            agnc_config_free(config);
+            return AGNC_STATUS_INVALID_ARGUMENT;
+        }
     }
 
     return AGNC_STATUS_OK;

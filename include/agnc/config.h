@@ -2,7 +2,7 @@
  * config.h
  *
  * Struktur dan loader untuk file config global ~/.agnc.json.
- * Fase 1 hanya memuat field minimum yang dibutuhkan spike OpenRouter.
+ * Fase 3: resolusi provider.active + providers{} + descriptor gateway.
  */
 
 #ifndef AGNC_CONFIG_H
@@ -14,6 +14,8 @@ typedef struct {
     char *base_url;
     char *model;
     char *api_key;
+    char *provider_id;  /* Kunci instance di providers{} config, mis. openrouter */
+    char *gateway_id;   /* Id descriptor gateway di registry */
     int max_tool_iterations;
     int stream;
     int verbose;

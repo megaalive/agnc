@@ -776,11 +776,16 @@ Status: **selesai** (Windows-first, 2026-06).
 
 ### 11.4 Fase 3 Acceptance
 
-- Descriptor generator menghasilkan C registry deterministik.
-- Provider OpenRouter, custom OpenAI-compatible, OpenCode lokal, Naraya, dan Gemini tercatat di descriptor.
-- Provider aktif bisa dipilih dari config.
-- `/provider` atau command setara bisa mengganti provider di mode interaktif.
-- Model discovery tersedia untuk provider yang mendukung.
+Status: **selesai** (Windows-first, 2026-06).
+
+- Descriptor generator menghasilkan C registry deterministik (`scripts/generate_integrations.py`).
+- Provider OpenRouter, custom OpenAI-compatible, OpenCode lokal, Naraya, dan Gemini tercatat di `descriptors/gateways/`.
+- Provider aktif bisa dipilih dari config (`provider.active`, `providers{}`, env `AGNC_PROVIDER`).
+- Model discovery tersedia untuk provider OpenAI-compatible (`agnc_provider_list_models`, GET `/models`).
+- `agnc doctor` menampilkan registry dan provider aktif.
+- Unit tests: `test_provider_registry`, `test_config_provider`.
+
+*(Slash `/provider` di mode interaktif masuk Fase 4.)*
 
 ### 11.5 Fase 4 Acceptance
 

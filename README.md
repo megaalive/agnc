@@ -49,6 +49,14 @@ copy config\agnc.example.json $env:USERPROFILE\.agnc.json
 # set env: $env:AGNC_API_KEY = "sk-..."
 ```
 
+Provider aktif diatur lewat `provider.active` dan entri `providers` di `~/.agnc.json` (lihat `config/agnc.example.json`). Gateway dideskripsikan di `descriptors/gateways/*.json` dan dikompilasi ke registry C lewat:
+
+```powershell
+python scripts/generate_integrations.py   # juga dijalankan otomatis oleh build.ps1
+```
+
+Override env: `AGNC_PROVIDER`, `AGNC_BASE_URL`, `AGNC_MODEL`.
+
 ### Mode headless `--print`
 
 ```powershell

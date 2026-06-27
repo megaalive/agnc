@@ -17,7 +17,7 @@ jobs:
         run: |
           if (Test-Path .\scripts\build.ps1) {
             .\scripts\build.ps1
-            cmake --build out\build\x64-Debug --target test_sse test_shell test_markdown_render test_atomic_write test_tool_path
+            cmake --build out\build\x64-Debug --target test_sse test_shell test_markdown_render test_atomic_write test_tool_path test_provider_registry test_config_provider
             ctest --test-dir out\build\x64-Debug --output-on-failure
             .\out\build\x64-Debug\agnc.exe doctor
             .\out\build\x64-Debug\agnc.exe --version

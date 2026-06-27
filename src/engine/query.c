@@ -9,6 +9,7 @@
 #include "agnc/net/http.h"
 #include "agnc/net/sse.h"
 #include "agnc/permissions.h"
+#include "agnc/provider.h"
 #include "agnc/tool.h"
 
 #include <stdio.h>
@@ -101,24 +102,6 @@ static agnc_status_t agnc_message_list_push(
 static agnc_status_t agnc_stream_callback(void *user_data, const char *chunk, size_t length)
 {
     return agnc_sse_parser_feed((agnc_sse_parser_t *)user_data, chunk, length);
-}
-
-static char *agnc_build_chat_url(const char *base_url)
-{
-    size_t length = strlen(base_url);
-    char *url;
-
-    while (length > 0 && base_url[length - 1] == '/') {
-        length--;
-    }
-
-    url = (char *)malloc(length + 32);
-    if (url == NULL) {
-        return NULL;
-    }
-
-    snprintf(url, length + 32, "%.*s/chat/completions", (int)length, base_url);
-    return url;
 }
 
 static void agnc_append_read_file_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
@@ -290,15 +273,23 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_mes
     yyjson_mut_val *tools_arr;
     char *result;
     size_t index;
+    const agnc_gateway_descriptor_t *gateway;
+    const char *api_model;
 
     doc = yyjson_mut_doc_new(NULL);
     if (doc == NULL) {
         return NULL;
     }
 
+    gateway = agnc_registry_find_gateway(config->gateway_id);
+    api_model = config->model;
+    if (gateway != NULL && config->model != NULL) {
+        api_model = agnc_provider_resolve_api_model(gateway, config->model);
+    }
+
     root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_str(doc, root, "model", config->model);
+    yyjson_mut_obj_add_str(doc, root, "model", api_model != NULL ? api_model : "");
     yyjson_mut_obj_add_bool(doc, root, "stream", config->stream ? true : false);
 
     messages_arr = yyjson_mut_arr(doc);
@@ -471,25 +462,34 @@ static agnc_status_t agnc_run_provider_turn(
     agnc_sse_parser_t *parser,
     char **error_message)
 {
+    const agnc_gateway_descriptor_t *gateway;
     char *url;
     char *auth_header;
     char *request_json;
     agnc_status_t status;
-    size_t auth_length;
 
-    url = agnc_build_chat_url(config->base_url);
+    gateway = agnc_registry_find_gateway(config->gateway_id);
+    if (gateway == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    url = agnc_provider_build_chat_url(gateway, config->base_url);
     if (url == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    auth_length = strlen(config->api_key) + 32;
-    auth_header = (char *)malloc(auth_length);
-    if (auth_header == NULL) {
+    auth_header = NULL;
+    if (config->api_key != NULL && config->api_key[0] != '\0') {
+        auth_header = agnc_provider_build_auth_header(gateway, config->api_key);
+        if (auth_header == NULL) {
+            free(url);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+    } else if (gateway->requires_auth) {
         free(url);
-        return AGNC_STATUS_OUT_OF_MEMORY;
+        return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    snprintf(auth_header, auth_length, "Authorization: Bearer %s", config->api_key);
     request_json = agnc_build_request_json(config, messages);
     if (request_json == NULL) {
         free(auth_header);

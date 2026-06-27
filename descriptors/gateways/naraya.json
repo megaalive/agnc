@@ -1,0 +1,27 @@
+{
+  "id": "naraya",
+  "label": "Naraya",
+  "category": "custom",
+  "default_base_url": "https://api.naraya.ai/v1",
+  "default_model": "naraya/default",
+  "setup": {
+    "requires_auth": true,
+    "auth_mode": "api-key",
+    "credential_env_vars": ["NARAYA_API_KEY", "AGNC_API_KEY"]
+  },
+  "transport": {
+    "kind": "openai-compatible",
+    "auth_header": {
+      "name": "Authorization",
+      "scheme": "bearer"
+    },
+    "endpoint_path": "/chat/completions",
+    "models_endpoint_path": "/models",
+    "supports_streaming": true,
+    "supports_tool_calls": true
+  },
+  "catalog": {
+    "source": "dynamic",
+    "models": []
+  }
+}
