@@ -81,6 +81,30 @@ static const agnc_gateway_descriptor_t agnc_gateway_naraya = {
     0,
 };
 
+static const char *const agnc_env_ollama[] = {
+    "OLLAMA_API_KEY",
+    NULL
+};
+
+static const agnc_gateway_descriptor_t agnc_gateway_ollama = {
+    "ollama",
+    "Ollama (lokal)",
+    "http://127.0.0.1:11434/v1",
+    "llama3.2",
+    AGNC_TRANSPORT_OPENAI_COMPATIBLE,
+    "Authorization",
+    "bearer",
+    "/chat/completions",
+    "/models",
+    1,
+    1,
+    0,
+    agnc_env_ollama,
+    1,
+    NULL,
+    0,
+};
+
 static const char *const agnc_env_opencode_local[] = {
     "AGNC_API_KEY",
     "OPENCODE_API_KEY",
@@ -139,6 +163,7 @@ static const agnc_gateway_descriptor_t *const agnc_gateway_table[] = {
     &agnc_gateway_custom_openai_compatible,
     &agnc_gateway_gemini,
     &agnc_gateway_naraya,
+    &agnc_gateway_ollama,
     &agnc_gateway_opencode_local,
     &agnc_gateway_openrouter,
 };

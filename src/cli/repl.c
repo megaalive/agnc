@@ -111,7 +111,7 @@ static void agnc_repl_print_help(void)
     printf("  /help              Tampilkan bantuan ini\n");
     printf("  /clear             Hapus riwayat percakapan\n");
     printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
-    printf("  /model [nama]      Tampilkan atau ganti model aktif\n");
+    printf("  /model [nama]      Daftar model (gateway dinamis) atau ganti model aktif\n");
     printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
     printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
     printf("  /session           Daftar sesi tersimpan\n");
@@ -679,9 +679,35 @@ static int agnc_repl_handle_slash(
             arg++;
         }
         if (*arg == '\0') {
-            char detail[256];
-            snprintf(detail, sizeof(detail), "model aktif: %s", config->model != NULL ? config->model : "?");
-            agnc_console_print_chat_system(detail);
+            const agnc_gateway_descriptor_t *gateway =
+                agnc_registry_find_gateway(config->gateway_id);
+            char **model_ids = NULL;
+            size_t model_count = 0;
+            size_t index;
+
+            if (gateway != NULL && gateway->model_count == 0 &&
+                agnc_provider_list_models(config, &model_ids, &model_count) == AGNC_STATUS_OK &&
+                model_count > 0) {
+                printf("Model (%zu) — gateway %s:\n", model_count, config->gateway_id != NULL ? config->gateway_id : "?");
+                for (index = 0; index < model_count && index < 32; index++) {
+                    const char *marker = config->model != NULL && model_ids[index] != NULL &&
+                                                 strcmp(model_ids[index], config->model) == 0
+                        ? " *"
+                        : "";
+                    printf("  %s%s\n", model_ids[index] != NULL ? model_ids[index] : "?", marker);
+                }
+                if (model_count > 32) {
+                    printf("  ... (%zu more)\n", model_count - 32);
+                }
+                agnc_provider_free_model_list(model_ids, model_count);
+                return 1;
+            }
+
+            {
+                char detail[256];
+                snprintf(detail, sizeof(detail), "model aktif: %s", config->model != NULL ? config->model : "?");
+                agnc_console_print_chat_system(detail);
+            }
             return 1;
         }
 

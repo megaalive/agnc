@@ -80,6 +80,12 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `pre_tool` dengan `exit /b 1` — tool diblokir, pesan `blocked by pre_tool hook`
 - [ ] `/hooks` dan `agnc doctor` — daftar / jumlah perintah hook
 
+## Ollama lokal (Fase 6.15)
+
+- [ ] `agnc doctor` — baris `ollama` ok jika `ollama serve` berjalan dan ada model
+- [ ] Config `providers.ollama` + `provider.active: ollama` — chat tanpa `AGNC_API_KEY`
+- [ ] REPL `/model` — daftar model Ollama; `/model <nama>` ganti model
+
 ## Catatan
 
 - Test provider live (OpenRouter/Gemini) bersifat opsional; set `AGNC_TEST_LIVE_OPENROUTER=1` hanya saat regression eksplisit.

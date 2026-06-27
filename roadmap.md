@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.15+) | Sub-agent, OAuth, gRPC, TUI | backlog |
+| **6. Fitur besar** (Fase 6.16+) | Sub-agent, OAuth, gRPC, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -984,6 +984,23 @@ Status: **selesai** (Windows-first, 2026-06).
 - Config `hooks.{session_start,pre_turn,post_turn,pre_tool,post_tool}` — array perintah shell.
 - Payload JSON via `AGNC_HOOK_PAYLOAD_FILE`; `pre_tool` exit ≠ 0 memblokir tool.
 - REPL: `/hooks`, `session_start` saat startup; doctor menghitung perintah hook.
+
+### 11.21 Fase 6.15 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Gateway descriptor `ollama` (OpenAI-compat `http://127.0.0.1:11434/v1`, tanpa auth wajib).
+- `agnc doctor` baris `ollama` — probe `/v1/models`.
+- REPL `/model` tanpa argumen — daftar model untuk gateway katalog dinamis (Ollama, dll.).
+- Provider `ollama` di `providers{}` contoh config.
+
+### 12.11 Urutan kerja Fase 6.15 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.15.1** | Descriptor + registry `ollama` | **Selesai** |
+| **6.15.2** | Probe doctor + `/model` list | **Selesai** |
+| **6.15.3** | Test + docs | **Selesai** |
 
 ### 12.10 Urutan kerja Fase 6.14 (dikunci 2026-06)
 
@@ -1178,7 +1195,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.15+** sebelum **6.14** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.16+** sebelum **6.15** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1287,7 +1304,14 @@ Tasks:
 - Config `hooks.*` + runner shell + payload JSON. — `hooks.c`, `config.c`
 - Integrasi pre/post turn & pre/post tool; `/hooks` REPL. — `query.c`, `repl.c`
 
-#### Fase 6.15+ — Backlog fitur besar
+#### Fase 6.15 — Ollama/local model polish — **selesai**
+
+Tasks:
+
+- Gateway `ollama` + probe doctor. — `descriptors/gateways/ollama.json`, `ollama.c`
+- `/model` list dinamis; provider tanpa auth. — `repl.c`, `provider.c`
+
+#### Fase 6.16+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 
@@ -1297,7 +1321,6 @@ Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 - Anthropic native
 - Ollama/local model polish
 - gRPC server
-- Hooks
 - TUI lebih kaya
 - Token usage dan cost tracking
 - ~~`todo_write` tool (§11.7)~~ — **selesai** (`src/tools/todo_write.c`)

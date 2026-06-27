@@ -175,14 +175,15 @@ agnc_status_t agnc_provider_list_models(
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (config->base_url == NULL || config->api_key == NULL) {
+    if (config->base_url == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
     url = agnc_provider_build_models_url(gateway, config->base_url);
-    auth_header = agnc_provider_build_auth_header(gateway, config->api_key);
-    if (url == NULL || auth_header == NULL) {
-        free(url);
+    if (config->api_key != NULL && config->api_key[0] != '\0') {
+        auth_header = agnc_provider_build_auth_header(gateway, config->api_key);
+    }
+    if (url == NULL) {
         free(auth_header);
         return AGNC_STATUS_OUT_OF_MEMORY;
     }

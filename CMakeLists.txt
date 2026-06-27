@@ -37,6 +37,7 @@ add_executable(agnc
     src/engine/session.c
     src/engine/skills.c
     src/engine/hooks.c
+    src/providers/ollama.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c

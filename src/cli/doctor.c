@@ -15,6 +15,7 @@
 #include "agnc/ctags_locate.h"
 #include "agnc/status.h"
 #include "agnc/tool_path.h"
+#include "agnc/ollama.h"
 #include "agnc/skills.h"
 #include "agnc/hooks.h"
 #include "agnc/version.h"
@@ -143,6 +144,20 @@ int agnc_cli_run_doctor(void)
             agnc_doctor_print_status("ctags", "ok", ctags_path);
         } else {
             agnc_doctor_print_status("ctags", "missing", "install Universal Ctags for find_symbol");
+        }
+    }
+
+    /* Ollama lokal (opsional) — OpenAI-compatible di :11434/v1. */
+    {
+        char detail[256];
+        size_t model_count = 0;
+        agnc_status_t ollama_status = agnc_ollama_probe(
+            AGNC_OLLAMA_DEFAULT_BASE_URL, &model_count, detail, sizeof(detail));
+
+        if (ollama_status == AGNC_STATUS_OK) {
+            agnc_doctor_print_status("ollama", model_count > 0 ? "ok" : "missing", detail);
+        } else {
+            agnc_doctor_print_status("ollama", "missing", "start Ollama (ollama serve) or install from ollama.com");
         }
     }
 
