@@ -1,9 +1,23 @@
 param(
+    # Posisi 0: .\scripts\build.ps1 release | debug
+    [Parameter(Position = 0)]
+    [ValidateSet("debug", "release", "")]
+    [string]$BuildType = "",
+
     [ValidateSet("Debug", "Release")]
-    [string]$Configuration = "Debug"
+    [string]$Configuration = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($BuildType -eq "release") {
+    $Configuration = "Release"
+} elseif ($BuildType -eq "debug") {
+    $Configuration = "Debug"
+} elseif ($Configuration -eq "") {
+    $Configuration = "Debug"
+}
+
 $root = Split-Path -Parent $PSScriptRoot
 $preset = if ($Configuration -eq "Release") { "x64-Release" } else { "x64-Debug" }
 $binary = Join-Path $root "out\build\$preset\agnc.exe"
@@ -29,6 +43,7 @@ if (-not (Test-Path $cmake)) {
 }
 
 Write-Host "Using Visual Studio at: $vsPath"
+Write-Host "Configuration: $Configuration"
 Write-Host "Preset: $preset"
 Write-Host "Output: $binary"
 

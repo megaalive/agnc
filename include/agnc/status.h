@@ -18,7 +18,8 @@ typedef enum {
     AGNC_STATUS_HTTP_ERROR,          /* Request HTTP gagal */
     AGNC_STATUS_PROVIDER_ERROR,      /* Provider LLM mengembalikan respons invalid */
     AGNC_STATUS_TOOL_DENIED,         /* Tool ditolak permission atau path di luar workspace */
-    AGNC_STATUS_TOOL_FAILED          /* Eksekusi tool gagal */
+    AGNC_STATUS_TOOL_FAILED,         /* Eksekusi tool gagal */
+    AGNC_STATUS_CANCELLED            /* Dibatalkan pengguna (Ctrl+C) */
 } agnc_status_t;
 
 /* Konversi kode status ke string pendek untuk logging/doctor. */

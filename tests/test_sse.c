@@ -145,11 +145,44 @@ static void test_tool_arguments_finalize_fragment(void **state)
     free(fixed);
 }
 
+static void test_sse_incremental_mid_word(void **state)
+{
+    agnc_sse_parser_t parser;
+    const char *chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Bandung adalah ibu\"}}]}\n\n";
+    const char *chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\" kota Provinsi Jawa Barat.\"}}]}\n\n";
+    (void)state;
+
+    agnc_sse_parser_init(&parser, 1, 0);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk1, strlen(chunk1)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk2, strlen(chunk2)), AGNC_STATUS_OK);
+    assert_string_equal(
+        agnc_sse_parser_get_content(&parser), "Bandung adalah ibu kota Provinsi Jawa Barat.");
+    agnc_sse_parser_free(&parser);
+}
+
+static void test_sse_incremental_deltas(void **state)
+{
+    agnc_sse_parser_t parser;
+    const char *chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Jakar\"}}]}\n\n";
+    const char *chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\"ta adalah\"}}]}\n\n";
+    const char *chunk3 = "data: {\"choices\":[{\"delta\":{\"content\":\" kota Indonesia.\"}}]}\n\n";
+    (void)state;
+
+    agnc_sse_parser_init(&parser, 1, 0);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk1, strlen(chunk1)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk2, strlen(chunk2)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk3, strlen(chunk3)), AGNC_STATUS_OK);
+    assert_string_equal(agnc_sse_parser_get_content(&parser), "Jakarta adalah kota Indonesia.");
+    agnc_sse_parser_free(&parser);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_non_stream_content),
         cmocka_unit_test(test_sse_chunked_lines),
+        cmocka_unit_test(test_sse_incremental_deltas),
+        cmocka_unit_test(test_sse_incremental_mid_word),
         cmocka_unit_test(test_tool_call_non_stream),
         cmocka_unit_test(test_split_chunk_boundary),
         cmocka_unit_test(test_provider_error_payload),

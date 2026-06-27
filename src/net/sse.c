@@ -30,6 +30,13 @@ void agnc_sse_parser_init(agnc_sse_parser_t *parser, int stream_mode, int verbos
     parser->verbose = verbose;
 }
 
+void agnc_sse_parser_set_live_print(agnc_sse_parser_t *parser, int enabled)
+{
+    if (parser != NULL) {
+        parser->stream_live_print = enabled ? 1 : 0;
+    }
+}
+
 void agnc_sse_parser_free(agnc_sse_parser_t *parser)
 {
     size_t index;
@@ -196,7 +203,8 @@ static char *agnc_stream_update_accumulator(char *existing, const char *chunk)
         return updated;
     }
 
-    return agnc_stream_append_with_overlap(existing, chunk);
+    /* Delta inkremental (token bisa terpotong di tengah kata): gabung langsung. */
+    return agnc_string_append(existing, chunk);
 }
 
 static char *agnc_tool_arguments_update(char *existing, const char *chunk)
@@ -226,33 +234,6 @@ static char *agnc_tool_arguments_update(char *existing, const char *chunk)
     }
 
     return agnc_string_append(existing, chunk);
-}
-
-static agnc_status_t agnc_stream_remember_chunk(char **slot, const char *text)
-{
-    char *copy;
-    size_t new_len;
-    size_t old_len;
-
-    if (text == NULL || text[0] == '\0') {
-        return AGNC_STATUS_OK;
-    }
-
-    new_len = strlen(text);
-    old_len = *slot != NULL ? strlen(*slot) : 0;
-
-    if (new_len < old_len) {
-        return AGNC_STATUS_OK;
-    }
-
-    copy = agnc_strdup_local(text);
-    if (copy == NULL) {
-        return AGNC_STATUS_OUT_OF_MEMORY;
-    }
-
-    free(*slot);
-    *slot = copy;
-    return AGNC_STATUS_OK;
 }
 
 static char *agnc_extract_path_from_jsonish(const char *text)
@@ -463,7 +444,44 @@ static agnc_status_t agnc_sse_accumulate_reasoning(agnc_sse_parser_t *parser, co
 
 static agnc_status_t agnc_sse_accumulate_content(agnc_sse_parser_t *parser, const char *text)
 {
-    return agnc_stream_remember_chunk(&parser->last_content_chunk, text);
+    size_t old_len = parser->last_content_chunk != NULL ? strlen(parser->last_content_chunk) : 0;
+    size_t chunk_len = text != NULL ? strlen(text) : 0;
+    int cumulative = 0;
+    char *updated;
+
+    if (text == NULL || text[0] == '\0') {
+        return AGNC_STATUS_OK;
+    }
+
+    if (parser->last_content_chunk != NULL && chunk_len >= old_len &&
+        strncmp(text, parser->last_content_chunk, old_len) == 0) {
+        cumulative = 1;
+    }
+
+    updated = agnc_stream_update_accumulator(parser->last_content_chunk, text);
+    if (updated == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    parser->last_content_chunk = updated;
+
+    /* Mode interaktif: cetak delta inkremental mentah, atau suffix jika chunk kumulatif. */
+    if (parser->stream_mode && parser->stream_live_print) {
+        if (cumulative) {
+            size_t new_len = strlen(parser->last_content_chunk);
+            if (new_len > old_len) {
+                fwrite(parser->last_content_chunk + old_len, 1, new_len - old_len, stdout);
+                fflush(stdout);
+                parser->printed_any = 1;
+            }
+        } else {
+            fwrite(text, 1, chunk_len, stdout);
+            fflush(stdout);
+            parser->printed_any = 1;
+        }
+    }
+
+    return AGNC_STATUS_OK;
 }
 
 static agnc_status_t agnc_sse_apply_message(agnc_sse_parser_t *parser, yyjson_val *message, int stream_mode)
@@ -703,6 +721,19 @@ agnc_status_t agnc_sse_parser_feed(agnc_sse_parser_t *parser, const char *chunk,
             }
             break;
         }
+    }
+
+    /* Buang baris yang sudah diproses agar chunk berikutnya tidak di-parse ulang. */
+    if (index >= parser->line_length) {
+        parser->line_length = 0;
+        if (parser->line_buffer != NULL) {
+            parser->line_buffer[0] = '\0';
+        }
+    } else if (index > 0) {
+        size_t remaining = parser->line_length - index;
+        memmove(parser->line_buffer, parser->line_buffer + index, remaining);
+        parser->line_length = remaining;
+        parser->line_buffer[parser->line_length] = '\0';
     }
 
     return AGNC_STATUS_OK;

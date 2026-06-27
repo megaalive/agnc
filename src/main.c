@@ -35,6 +35,8 @@ int main(int argc, char **argv)
         exit_code = agnc_cli_run_doctor();
     } else if (options.show_print) {
         exit_code = agnc_cli_run_print(options.print_prompt, options.no_tools, options.auto_approve);
+    } else if (options.show_interactive) {
+        exit_code = agnc_cli_run_interactive();
     } else {
         exit_code = agnc_cli_run_help();
     }

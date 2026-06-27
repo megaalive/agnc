@@ -19,7 +19,8 @@ agnc_status_t agnc_http_post_stream(
     const char *json_body,
     agnc_http_stream_cb callback,
     void *user_data,
-    char **error_message);
+    char **error_message,
+    volatile int *cancel_flag);
 
 /* GET sinkron; mengumpulkan body utuh (mis. /models discovery). */
 agnc_status_t agnc_http_get(

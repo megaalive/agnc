@@ -28,6 +28,8 @@ const char *agnc_status_to_string(agnc_status_t status)
         return "tool_denied";
     case AGNC_STATUS_TOOL_FAILED:
         return "tool_failed";
+    case AGNC_STATUS_CANCELLED:
+        return "cancelled";
     default:
         return "unknown";
     }

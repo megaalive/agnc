@@ -29,8 +29,11 @@ add_executable(agnc
     src/cli/doctor.c
     src/cli/markdown_render.c
     src/cli/print.c
+    src/cli/repl.c
     src/config/config.c
+    src/engine/conversation.c
     src/engine/query.c
+    src/engine/session.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c
@@ -196,4 +199,26 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_config_provider)
 
     add_test(NAME test_config_provider COMMAND test_config_provider)
+
+    add_executable(test_session
+        tests/test_session.c
+        src/engine/conversation.c
+        src/engine/session.c
+        src/config/config.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+    )
+
+    target_include_directories(test_session PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_link_libraries(test_session PRIVATE yyjson::yyjson cmocka::cmocka)
+    agnc_set_compiler_warnings(test_session)
+
+    add_test(NAME test_session COMMAND test_session)
 endif()

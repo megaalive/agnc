@@ -31,10 +31,12 @@ typedef struct {
     int has_tool_calls;
     int printed_any;
     int stream_mode;
+    int stream_live_print; /* Cetak delta ke stdout saat stream (mode interaktif). */
     int verbose;
 } agnc_sse_parser_t;
 
 void agnc_sse_parser_init(agnc_sse_parser_t *parser, int stream_mode, int verbose);
+void agnc_sse_parser_set_live_print(agnc_sse_parser_t *parser, int enabled);
 void agnc_sse_parser_free(agnc_sse_parser_t *parser);
 
 agnc_status_t agnc_sse_parser_feed(agnc_sse_parser_t *parser, const char *chunk, size_t length);

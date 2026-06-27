@@ -105,7 +105,7 @@ AGNC_API agnc_status_t agnc_cli_parse_impl(int argc, char **argv, agnc_cli_optio
     }
 
     if (!options->show_version && !options->show_doctor && !options->show_help && !options->show_print) {
-        options->show_help = 1;
+        options->show_interactive = 1;
     }
 
     return AGNC_STATUS_OK;
@@ -120,8 +120,9 @@ AGNC_API int agnc_cli_run_version_impl(void)
 /* Tampilkan usage singkat ke stdout. */
 AGNC_API int agnc_cli_run_help_impl(void)
 {
-    printf("agnc - OpenClaude-compatible coding agent CLI (C)\n\n");
+    printf("agnc - personal coding-agent CLI (C)\n\n");
     printf("Usage:\n");
+    printf("  agnc                           Interactive REPL (default)\n");
     printf("  agnc --version                 Show version\n");
     printf("  agnc doctor                    Check environment and dependencies\n");
     printf("  agnc --print \"your prompt\"     Run headless agent query (Phase 1)\n");

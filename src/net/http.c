@@ -31,6 +31,7 @@ typedef struct {
     char *response_body;
     size_t response_length;
     size_t response_capacity;
+    volatile int *cancel_flag;
 } agnc_http_stream_state_t;
 
 static agnc_status_t agnc_http_append_body(agnc_http_stream_state_t *state, const char *data, size_t length)
@@ -66,6 +67,11 @@ static size_t agnc_http_write_callback(char *ptr, size_t size, size_t nmemb, voi
 {
     agnc_http_stream_state_t *state = (agnc_http_stream_state_t *)userdata;
     size_t total = size * nmemb;
+
+    if (state->cancel_flag != NULL && *state->cancel_flag) {
+        state->status = AGNC_STATUS_CANCELLED;
+        return 0;
+    }
 
     if (agnc_http_append_body(state, ptr, total) != AGNC_STATUS_OK) {
         state->status = AGNC_STATUS_OUT_OF_MEMORY;
@@ -190,7 +196,8 @@ agnc_status_t agnc_http_post_stream(
     const char *json_body,
     agnc_http_stream_cb callback,
     void *user_data,
-    char **error_message)
+    char **error_message,
+    volatile int *cancel_flag)
 {
     CURL *curl;
     CURLcode code;
@@ -213,6 +220,7 @@ agnc_status_t agnc_http_post_stream(
     state.callback = callback;
     state.user_data = user_data;
     state.status = AGNC_STATUS_OK;
+    state.cancel_flag = cancel_flag;
 
     headers = curl_slist_append(headers, "Content-Type: application/json");
     if (auth_header != NULL && auth_header[0] != '\0') {

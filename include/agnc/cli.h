@@ -19,7 +19,8 @@
 typedef struct {
     int show_version; /* `agnc --version` */
     int show_doctor;  /* `agnc doctor` */
-    int show_help;    /* `agnc --help` atau default tanpa argumen */
+    int show_help;    /* `agnc --help` */
+    int show_interactive; /* `agnc` tanpa argumen — REPL interaktif */
     int show_print;   /* `agnc --print "prompt"` */
     int no_tools;     /* `agnc --no-tools` — chat tanpa tool schema */
     int auto_approve; /* `agnc --yes` — setujui shell tanpa prompt */
@@ -59,4 +60,7 @@ static inline int agnc_cli_run_help(void)
 /* Jalankan mode headless --print; return exit code proses. */
 int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve);
 
-#endif
+/* Jalankan REPL interaktif (Fase 4). */
+int agnc_cli_run_interactive(void);
+
+#endif /* AGNC_CLI_H */

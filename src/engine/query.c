@@ -6,11 +6,14 @@
 
 #include "agnc/query.h"
 #include "agnc/console.h"
+#include "agnc/conversation.h"
 #include "agnc/net/http.h"
 #include "agnc/net/sse.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
+#include "agnc/status.h"
 #include "agnc/tool.h"
+#include "agnc/tool_path.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,20 +22,7 @@
 #include <curl/curl.h>
 #include <yyjson.h>
 
-#define AGNC_MAX_MESSAGES 64
-
-typedef struct {
-    char *role;
-    char *content;
-    char *tool_call_id;
-    char *tool_name;
-    char *tool_arguments;
-} agnc_chat_message_t;
-
-typedef struct {
-    agnc_chat_message_t items[AGNC_MAX_MESSAGES];
-    size_t count;
-} agnc_message_list_t;
+#define AGNC_TOOL_RESULT_MAX 6000
 
 static char *agnc_strdup_local(const char *value)
 {
@@ -43,60 +33,50 @@ static char *agnc_strdup_local(const char *value)
 #endif
 }
 
-static void agnc_message_list_init(agnc_message_list_t *list)
+static void agnc_query_truncate_tool_result(char **tool_result)
 {
-    memset(list, 0, sizeof(*list));
+    size_t len;
+    char *resized;
+    static const char suffix[] = "\n...(output truncated)";
+
+    if (tool_result == NULL || *tool_result == NULL) {
+        return;
+    }
+
+    len = strlen(*tool_result);
+    if (len <= AGNC_TOOL_RESULT_MAX) {
+        return;
+    }
+
+    resized = (char *)realloc(*tool_result, AGNC_TOOL_RESULT_MAX + sizeof(suffix));
+    if (resized == NULL) {
+        (*tool_result)[AGNC_TOOL_RESULT_MAX] = '\0';
+        return;
+    }
+
+    *tool_result = resized;
+    resized[AGNC_TOOL_RESULT_MAX] = '\0';
+    memcpy(resized + AGNC_TOOL_RESULT_MAX, suffix, sizeof(suffix));
 }
 
-static void agnc_message_list_clear(agnc_message_list_t *list)
+static void agnc_query_report_repl_error(
+    int chat_assistant_timestamp,
+    agnc_status_t status,
+    const char *detail)
 {
-    size_t index;
+    char line[512];
 
-    for (index = 0; index < list->count; index++) {
-        agnc_chat_message_t *item = &list->items[index];
-
-        free(item->role);
-        free(item->content);
-        free(item->tool_call_id);
-        free(item->tool_name);
-        free(item->tool_arguments);
-        /* Null setelah free: hilangkan peringatan C6001 saat reuse slot message list. */
-        item->role = NULL;
-        item->content = NULL;
-        item->tool_call_id = NULL;
-        item->tool_name = NULL;
-        item->tool_arguments = NULL;
+    if (!chat_assistant_timestamp) {
+        return;
     }
 
-    list->count = 0;
-}
-
-static agnc_status_t agnc_message_list_push(
-    agnc_message_list_t *list,
-    const char *role,
-    const char *content,
-    const char *tool_call_id,
-    const char *tool_name,
-    const char *tool_arguments)
-{
-    agnc_chat_message_t *message;
-
-    if (list->count >= AGNC_MAX_MESSAGES) {
-        return AGNC_STATUS_PROVIDER_ERROR;
+    if (detail != NULL && detail[0] != '\0') {
+        snprintf(line, sizeof(line), "%s", detail);
+    } else {
+        snprintf(line, sizeof(line), "query gagal (%s)", agnc_status_to_string(status));
     }
 
-    message = &list->items[list->count++];
-    message->role = agnc_strdup_local(role);
-    message->content = content != NULL ? agnc_strdup_local(content) : NULL;
-    message->tool_call_id = tool_call_id != NULL ? agnc_strdup_local(tool_call_id) : NULL;
-    message->tool_name = tool_name != NULL ? agnc_strdup_local(tool_name) : NULL;
-    message->tool_arguments = tool_arguments != NULL ? agnc_strdup_local(tool_arguments) : NULL;
-
-    if (message->role == NULL) {
-        return AGNC_STATUS_OUT_OF_MEMORY;
-    }
-
-    return AGNC_STATUS_OK;
+    agnc_console_print_chat_system(line);
 }
 
 static agnc_status_t agnc_stream_callback(void *user_data, const char *chunk, size_t length)
@@ -265,7 +245,7 @@ static void agnc_append_shell_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_ar
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
-static char *agnc_build_request_json(const agnc_config_t *config, const agnc_message_list_t *messages)
+static char *agnc_build_request_json(const agnc_config_t *config, const agnc_conversation_t *conversation)
 {
     yyjson_mut_doc *doc;
     yyjson_mut_val *root;
@@ -295,8 +275,8 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_mes
     messages_arr = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "messages", messages_arr);
 
-    for (index = 0; index < messages->count; index++) {
-        const agnc_chat_message_t *message = &messages->items[index];
+    for (index = 0; index < conversation->count; index++) {
+        const agnc_conversation_message_t *message = &conversation->items[index];
         yyjson_mut_val *entry = yyjson_mut_obj(doc);
 
         yyjson_mut_obj_add_str(doc, entry, "role", message->role);
@@ -356,11 +336,26 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_mes
     return result;
 }
 
+static void agnc_query_log_tool_line(const agnc_config_t *config, int interactive_repl, const char *line)
+{
+    if (line == NULL) {
+        return;
+    }
+
+    if (interactive_repl) {
+        agnc_console_print_chat_tool(line);
+    } else if (config != NULL && config->verbose) {
+        fprintf(stderr, "agnc: [tool] %s\n", line);
+        fflush(stderr);
+    }
+}
+
 static agnc_status_t agnc_execute_tool(
     const agnc_config_t *config,
     const char *tool_name,
     char *tool_arguments,
-    char **tool_result)
+    char **tool_result,
+    int interactive_repl)
 {
     agnc_status_t status;
     int allowed = 1;
@@ -368,18 +363,24 @@ static agnc_status_t agnc_execute_tool(
     *tool_result = NULL;
 
     if (strcmp(tool_name, "read_file") == 0) {
-        fprintf(stderr, "agnc: [tool] read_file\n");
+        agnc_query_log_tool_line(config, interactive_repl, "read_file");
         return agnc_tool_read_file_execute(tool_arguments, tool_result);
     }
 
     if (strcmp(tool_name, "shell") == 0) {
         char *shell_command = NULL;
         const char *preview;
+        char tool_line[512];
 
         status = agnc_tool_shell_extract_command(tool_arguments, &shell_command);
         preview = shell_command != NULL ? shell_command : agnc_tool_shell_command_preview(tool_arguments);
 
-        fprintf(stderr, "agnc: [tool] shell: %s\n", preview != NULL ? preview : "(empty)");
+        snprintf(
+            tool_line,
+            sizeof(tool_line),
+            "shell: %s",
+            preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
         if (shell_command != NULL && agnc_tool_shell_is_search_command(shell_command)) {
             free(shell_command);
@@ -390,7 +391,8 @@ static agnc_status_t agnc_execute_tool(
         free(shell_command);
 
         if (config->ask_shell_permission) {
-            status = agnc_permission_ask_shell(agnc_tool_shell_command_preview(tool_arguments), &allowed);
+            status = agnc_permission_ask_shell(
+                agnc_tool_shell_command_preview(tool_arguments), &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
             }
@@ -404,11 +406,13 @@ static agnc_status_t agnc_execute_tool(
 
     if (strcmp(tool_name, "write_file") == 0) {
         const char *preview = agnc_tool_write_file_path_preview(tool_arguments);
+        char tool_line[512];
 
-        fprintf(stderr, "agnc: [tool] write_file: %s\n", preview != NULL ? preview : "(empty)");
+        snprintf(tool_line, sizeof(tool_line), "write_file: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
         if (config->ask_write_permission) {
-            status = agnc_permission_ask_file_write(preview, "write", &allowed);
+            status = agnc_permission_ask_file_write(preview, "write", &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
             }
@@ -422,11 +426,13 @@ static agnc_status_t agnc_execute_tool(
 
     if (strcmp(tool_name, "edit_file") == 0) {
         const char *preview = agnc_tool_edit_file_path_preview(tool_arguments);
+        char tool_line[512];
 
-        fprintf(stderr, "agnc: [tool] edit_file: %s\n", preview != NULL ? preview : "(empty)");
+        snprintf(tool_line, sizeof(tool_line), "edit_file: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
         if (config->ask_write_permission) {
-            status = agnc_permission_ask_file_write(preview, "edit", &allowed);
+            status = agnc_permission_ask_file_write(preview, "edit", &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
             }
@@ -440,15 +446,19 @@ static agnc_status_t agnc_execute_tool(
 
     if (strcmp(tool_name, "grep") == 0) {
         const char *preview = agnc_tool_grep_pattern_preview(tool_arguments);
+        char tool_line[512];
 
-        fprintf(stderr, "agnc: [tool] grep: %s\n", preview != NULL ? preview : "(empty)");
+        snprintf(tool_line, sizeof(tool_line), "grep: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
         return agnc_tool_grep_execute(tool_arguments, tool_result);
     }
 
     if (strcmp(tool_name, "glob") == 0) {
         const char *preview = agnc_tool_glob_pattern_preview(tool_arguments);
+        char tool_line[512];
 
-        fprintf(stderr, "agnc: [tool] glob: %s\n", preview != NULL ? preview : "(empty)");
+        snprintf(tool_line, sizeof(tool_line), "glob: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
         return agnc_tool_glob_execute(tool_arguments, tool_result);
     }
 
@@ -458,9 +468,10 @@ static agnc_status_t agnc_execute_tool(
 
 static agnc_status_t agnc_run_provider_turn(
     const agnc_config_t *config,
-    const agnc_message_list_t *messages,
+    const agnc_conversation_t *conversation,
     agnc_sse_parser_t *parser,
-    char **error_message)
+    char **error_message,
+    volatile int *cancel_flag)
 {
     const agnc_gateway_descriptor_t *gateway;
     char *url;
@@ -490,7 +501,7 @@ static agnc_status_t agnc_run_provider_turn(
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    request_json = agnc_build_request_json(config, messages);
+    request_json = agnc_build_request_json(config, conversation);
     if (request_json == NULL) {
         free(auth_header);
         free(url);
@@ -501,7 +512,8 @@ static agnc_status_t agnc_run_provider_turn(
         fprintf(stderr, "agnc: POST %s\n", url);
     }
 
-    status = agnc_http_post_stream(url, auth_header, request_json, agnc_stream_callback, parser, error_message);
+    status = agnc_http_post_stream(
+        url, auth_header, request_json, agnc_stream_callback, parser, error_message, cancel_flag);
 
     if (status == AGNC_STATUS_OK && agnc_sse_parser_get_error(parser) != NULL) {
         if (error_message != NULL && *error_message == NULL) {
@@ -567,28 +579,115 @@ static int agnc_query_prompt_is_search(const char *prompt)
     return 0;
 }
 
-agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
+const char *agnc_query_default_system_prompt(int enable_tools, int search_only)
 {
-    agnc_config_t run_config;
-    agnc_message_list_t messages;
+    if (enable_tools) {
+        if (search_only) {
+            return "You are a helpful coding assistant on Windows. "
+                   "This is a search-only query: use the grep tool (path=src if user mentions src). "
+                   "Shell is disabled. Never suggest findstr, where, or rg via shell. "
+                   "Match the user's language. Be concise.";
+        }
+        return "You are a helpful coding assistant on Windows. "
+               "For code/text search use the grep tool (ripgrep), never shell findstr/find/rg/where. "
+               "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
+               "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
+               "Paths like src/ resolve from repo root even when cwd is a build subfolder. "
+               "For directory or file listings use a bullet or numbered list with one path or name per line; "
+               "never comma-join multiple items on the same line. "
+               "Match the user's language. Be concise; do not add filler intros before answers.";
+    }
+    return "You are a helpful coding assistant. You cannot access the filesystem or run shell commands in this session. "
+           "Match the user's language. Be concise; do not invent file names or directory listings.";
+}
+
+static char *agnc_query_build_system_prompt(int enable_tools, int search_only)
+{
+    const char *base = agnc_query_default_system_prompt(enable_tools, search_only);
+    char *workspace_root = NULL;
+    char *prompt = NULL;
+    size_t length;
+
+    if (!enable_tools) {
+        return agnc_strdup_local(base);
+    }
+
+    if (agnc_tool_path_workspace_root(&workspace_root) != AGNC_STATUS_OK || workspace_root == NULL) {
+        return agnc_strdup_local(base);
+    }
+
+    length = strlen(base) + strlen(workspace_root) + 128;
+    prompt = (char *)malloc(length);
+    if (prompt == NULL) {
+        free(workspace_root);
+        return agnc_strdup_local(base);
+    }
+
+    snprintf(
+        prompt,
+        length,
+        "%s Workspace root: %s. For workspace-wide file counts use glob with path \".\"; "
+        "use shell dir only when the user names a specific folder.",
+        base,
+        workspace_root);
+    free(workspace_root);
+    return prompt;
+}
+
+agnc_status_t agnc_query_run(
+    agnc_config_t *config,
+    agnc_conversation_t *conversation,
+    const char *user_prompt,
+    const agnc_query_options_t *options)
+{
     agnc_sse_parser_t parser;
     agnc_status_t status;
     size_t iteration;
     char *error_message = NULL;
     int curl_initialized = 0;
     int any_output = 0;
-    const char *system_prompt;
+    int search_only = 0;
+    volatile int *cancel_flag = NULL;
+    int stream_live_print = 0;
+    int chat_assistant_timestamp = 0;
+    char *system_prompt = NULL;
 
-    if (config == NULL || prompt == NULL) {
+    if (config == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    run_config = *config;
-    if (agnc_query_prompt_is_search(prompt)) {
-        /* Query pencarian: jangan expose shell agar model tidak loop findstr/rg/where. */
-        run_config.tool_shell = 0;
+    if (options != NULL) {
+        cancel_flag = options->cancel_flag;
+        stream_live_print = options->stream_live_print;
+        chat_assistant_timestamp = options->chat_assistant_timestamp;
     }
-    config = &run_config;
+
+    if (user_prompt != NULL && user_prompt[0] != '\0') {
+        search_only = agnc_query_prompt_is_search(user_prompt);
+        if (search_only) {
+            config->tool_shell = 0;
+        }
+
+        (void)agnc_conversation_compact_if_needed(
+            conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
+
+        status = agnc_conversation_push(conversation, "user", user_prompt, NULL, NULL, NULL);
+        if (status != AGNC_STATUS_OK) {
+            agnc_query_report_repl_error(
+                chat_assistant_timestamp,
+                status,
+                "riwayat percakapan penuh — ketik /compact atau /clear");
+            return status;
+        }
+    }
+
+    system_prompt = agnc_query_build_system_prompt(config->enable_tools, search_only);
+    status = agnc_conversation_ensure_system(conversation, system_prompt);
+    free(system_prompt);
+    system_prompt = NULL;
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
 
     memset(&parser, 0, sizeof(parser));
 
@@ -596,64 +695,51 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
         curl_initialized = 1;
     }
 
-    agnc_message_list_init(&messages);
-
-    if (config->enable_tools) {
-        if (agnc_query_prompt_is_search(prompt)) {
-            system_prompt =
-                "You are a helpful coding assistant on Windows. "
-                "This is a search-only query: use the grep tool (path=src if user mentions src). "
-                "Shell is disabled. Never suggest findstr, where, or rg via shell. "
-                "Match the user's language. Be concise.";
-        } else {
-            system_prompt =
-                "You are a helpful coding assistant on Windows. "
-                "For code/text search use the grep tool (ripgrep), never shell findstr/find/rg/where. "
-                "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
-                "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
-                "Paths like src/ resolve from repo root even when cwd is a build subfolder. "
-                "Match the user's language. Be concise; do not add filler intros before answers.";
-        }
-    } else {
-        system_prompt =
-            "You are a helpful coding assistant. You cannot access the filesystem or run shell commands in this session. "
-            "Match the user's language. Be concise; do not invent file names or directory listings.";
-    }
-
-    status = agnc_message_list_push(&messages, "system", system_prompt, NULL, NULL, NULL);
-    if (status != AGNC_STATUS_OK) {
-        goto cleanup;
-    }
-
-    status = agnc_message_list_push(&messages, "user", prompt, NULL, NULL, NULL);
-    if (status != AGNC_STATUS_OK) {
-        goto cleanup;
-    }
-
     for (iteration = 0; iteration < (size_t)config->max_tool_iterations; iteration++) {
         const agnc_sse_tool_call_t *tool_call;
 
+        (void)agnc_conversation_compact_if_needed(
+            conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
+
         agnc_sse_parser_free(&parser);
         agnc_sse_parser_init(&parser, config->stream, config->verbose);
+        agnc_sse_parser_set_live_print(&parser, stream_live_print);
 
-        status = agnc_run_provider_turn(config, &messages, &parser, &error_message);
+        if (chat_assistant_timestamp) {
+            agnc_console_spinner_start();
+        }
+
+        status = agnc_run_provider_turn(config, conversation, &parser, &error_message, cancel_flag);
+
+        if (chat_assistant_timestamp) {
+            agnc_console_spinner_stop();
+        }
+
         if (status != AGNC_STATUS_OK) {
             goto cleanup;
         }
 
         agnc_sse_parser_finalize_turn(&parser);
 
-        /* Render markdown/tabel ASCII; modul SSE hanya menandai ada konten. */
-        if (agnc_sse_parser_printed_any(&parser)) {
-            agnc_console_print_assistant_body(agnc_sse_parser_get_content(&parser));
-        }
-
-        if (agnc_sse_parser_printed_any(&parser)) {
-            any_output = 1;
-        }
-
         if (!agnc_sse_parser_has_tool_calls(&parser) || agnc_sse_parser_get_tool_call_count(&parser) == 0) {
-            if (any_output) {
+            const char *content = agnc_sse_parser_get_content(&parser);
+
+            if (agnc_sse_parser_printed_any(&parser)) {
+                if (chat_assistant_timestamp) {
+                    agnc_console_print_chat_assistant_begin();
+                }
+                agnc_console_print_assistant_body(content);
+                any_output = 1;
+            }
+
+            if (content != NULL && content[0] != '\0') {
+                status = agnc_conversation_push(conversation, "assistant", content, NULL, NULL, NULL);
+                if (status != AGNC_STATUS_OK) {
+                    goto cleanup;
+                }
+            }
+
+            if (any_output && !chat_assistant_timestamp) {
                 fputc('\n', stdout);
             }
             status = AGNC_STATUS_OK;
@@ -695,13 +781,15 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
                 fprintf(stderr, "agnc: tool call %s(%s)\n", tool_call->name, arguments != NULL ? arguments : "{}");
             }
 
-            status = agnc_message_list_push(&messages, "assistant", NULL, tool_id, tool_call->name, arguments);
+            status = agnc_conversation_push(
+                conversation, "assistant", NULL, tool_id, tool_call->name, arguments);
             if (status != AGNC_STATUS_OK) {
                 free(arguments);
                 goto cleanup;
             }
 
-            status = agnc_execute_tool(config, tool_call->name, arguments, &tool_result);
+            status = agnc_execute_tool(
+                config, tool_call->name, arguments, &tool_result, chat_assistant_timestamp);
             free(arguments);
 
             if (tool_result == NULL) {
@@ -715,8 +803,10 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
                 }
             }
 
-            status = agnc_message_list_push(
-                &messages,
+            agnc_query_truncate_tool_result(&tool_result);
+
+            status = agnc_conversation_push(
+                conversation,
                 "tool",
                 tool_result != NULL ? tool_result : "error: tool failed",
                 tool_id,
@@ -728,35 +818,65 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
                 goto cleanup;
             }
         }
-
-        if (agnc_sse_parser_printed_any(&parser)) {
-            fputc('\n', stdout);
-        }
     }
 
     status = AGNC_STATUS_PROVIDER_ERROR;
     fprintf(stderr, "agnc: max tool iterations reached\n");
 
 cleanup:
-    if (status == AGNC_STATUS_OK && !any_output) {
+    if (chat_assistant_timestamp) {
+        agnc_console_spinner_stop();
+    }
+
+    if (status == AGNC_STATUS_CANCELLED) {
+        fputc('\n', stdout);
+        fprintf(stderr, "agnc: request cancelled\n");
+    } else if (status == AGNC_STATUS_OK && !any_output) {
         fprintf(stderr, "agnc: warning: provider returned no visible output (enable runtime.verbose for details)\n");
     }
 
-    if (status != AGNC_STATUS_OK) {
+    if (status != AGNC_STATUS_OK && status != AGNC_STATUS_CANCELLED) {
         if (error_message != NULL) {
             fprintf(stderr, "agnc: %s\n", error_message);
         } else if (agnc_sse_parser_get_error(&parser) != NULL) {
             fprintf(stderr, "agnc: %s\n", agnc_sse_parser_get_error(&parser));
         }
+        agnc_query_report_repl_error(
+            chat_assistant_timestamp,
+            status,
+            error_message != NULL ? error_message : agnc_sse_parser_get_error(&parser));
     }
 
     free(error_message);
     agnc_sse_parser_free(&parser);
-    agnc_message_list_clear(&messages);
 
     if (curl_initialized) {
         curl_global_cleanup();
     }
 
+    return status;
+}
+
+agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
+{
+    agnc_config_t run_config;
+    agnc_conversation_t conversation;
+    agnc_query_options_t options;
+    agnc_status_t status;
+
+    if (config == NULL || prompt == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    run_config = *config;
+    run_config.stream = 0;
+
+    agnc_conversation_init(&conversation);
+
+    memset(&options, 0, sizeof(options));
+    options.stream_live_print = 0;
+
+    status = agnc_query_run(&run_config, &conversation, prompt, &options);
+    agnc_conversation_clear(&conversation);
     return status;
 }

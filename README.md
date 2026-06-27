@@ -1,6 +1,8 @@
 # agnc
 
-CLI coding-agent pengganti OpenClaude, ditulis dalam C.
+CLI coding-agent untuk pemakaian sehari-hari di terminal — chat, tool, dan query ke model LLM.
+
+Ditulis dalam C, Windows-first.
 
 ## Visual Studio 2026 (Disarankan untuk Debug)
 
@@ -20,7 +22,8 @@ Satu lokasi output untuk semua workflow: **`out/build/x64-Debug/agnc.exe`** (sam
 ### Opsi A: Script build (disarankan)
 
 ```powershell
-.\scripts\build.ps1
+.\scripts\build.ps1          # Debug (default)
+.\scripts\build.ps1 release  # Release
 .\out\build\x64-Debug\agnc.exe --version
 .\out\build\x64-Debug\agnc.exe doctor
 ```
@@ -57,6 +60,20 @@ python scripts/generate_integrations.py   # juga dijalankan otomatis oleh build.
 
 Override env: `AGNC_PROVIDER`, `AGNC_BASE_URL`, `AGNC_MODEL`.
 
+### Mode interaktif (default)
+
+Jalankan tanpa argumen untuk REPL chat dengan streaming:
+
+```powershell
+.\out\build\x64-Debug\agnc.exe
+```
+
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/doctor`, `/exit`.
+
+**Session:** satu riwayat aktif di `%USERPROFILE%\.agnc\sessions\current.json`. Sisa file `current.json.tmp.*` dari simpan terputus dibersihkan otomatis saat REPL dibuka. Riwayat yang terlalu panjang diringkas otomatis.
+
+Ctrl+C saat request berjalan membatalkan tanpa keluar REPL.
+
 ### Mode headless `--print`
 
 ```powershell
@@ -72,7 +89,8 @@ Override env: `AGNC_PROVIDER`, `AGNC_BASE_URL`, `AGNC_MODEL`.
 
 | Flag | Keterangan |
 | --- | --- |
-| `--print "prompt"` | Query headless ke provider (OpenRouter) |
+| *(tanpa argumen)* | REPL interaktif dengan streaming |
+| `--print "prompt"` | Query headless ke provider |
 | `--no-tools` | Chat tanpa tool schema |
 | `--yes` / `-y` | Setujui shell dan tulis/edit file otomatis |
 | `doctor` | Cek config, libcurl, yyjson, ripgrep |
@@ -89,7 +107,7 @@ Override env: `AGNC_PROVIDER`, `AGNC_BASE_URL`, `AGNC_MODEL`.
 | `grep` | allow | Spawn `rg` (ripgrep), butuh di PATH |
 | `glob` | allow | Cari file by pola `*` / `?` |
 
-Path file divalidasi agar tidak keluar **workspace** (cwd atau `AGNC_WORKSPACE`).
+Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`).
 
 ## Unit test
 
@@ -108,11 +126,13 @@ Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corru
 - Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
 - API key tidak pernah dicetak ke log atau stdout.
 
-Lihat `roadmap.md` untuk rencana implementasi lengkap.
+Lihat `roadmap.md` untuk rencana implementasi.
 
 ## Status fase
 
 - **Fase 0** — bootstrap, build, doctor: selesai
-- **Fase 1** — `--print`, OpenRouter, read_file, shell, SSE, renderer: selesai
+- **Fase 1** — `--print`, provider HTTP, read_file, shell, SSE, renderer: selesai
 - **Fase 2** — write_file, edit_file, grep, glob, path safety: selesai (Windows-first)
-- **Fase 3+** — provider descriptor, REPL interaktif, MCP: rencana
+- **Fase 3** — provider descriptor, registry gateway, model discovery: selesai
+- **Fase 4** — REPL interaktif, streaming, slash commands, session persistence: selesai
+- **Fase 5+** — MCP stdio, web fetch: rencana

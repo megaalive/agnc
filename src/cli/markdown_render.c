@@ -20,11 +20,11 @@
 #include <windows.h>
 #endif
 
-#define ANSI_RESET "\033[0m"
-#define ANSI_BOLD "\033[1m"
-#define ANSI_DIM "\033[2m"
+#define ANSI_RESET AGNC_ANSI_RESET
+#define ANSI_DIM AGNC_ANSI_DIM
+#define ANSI_BOLD AGNC_ANSI_BOLD
 #define ANSI_ITALIC "\033[3m"
-#define ANSI_CYAN "\033[36m"
+#define ANSI_CODE AGNC_ANSI_CODE
 
 #define MD_MAX_COLS 6
 #define MD_MAX_ROWS 48
@@ -98,6 +98,15 @@ static int is_box_drawing_line(const char* line) {
     int special = 0;
     int plain = 0;
     if (!line || !line[0]) return 0;
+
+    /* Markdown bold — bukan diagram ASCII (mis. "**Folder (4):**"). */
+    if (strstr(line, "**") != NULL) return 0;
+
+    /* Diagram butuh garis struktural (+, |, ---), bukan hanya tanda baca. */
+    if (strchr(line, '+') == NULL && strchr(line, '|') == NULL && strstr(line, "---") == NULL) {
+        return 0;
+    }
+
     for (p = line; *p; p++) {
         unsigned char c = (unsigned char)*p;
         if (c >= 0x80U) {
@@ -119,6 +128,49 @@ static void write_indent(int indent) {
 static void write_plain(const char* text, size_t len) {
     if (!text || len == 0) return;
     fwrite(text, 1, len, stdout);
+}
+
+/* Model kadang kirim `` `**Heading:**` `` — treat sebagai bold, bukan inline code. */
+static int agnc_md_is_wrapped_bold(const char* inner, size_t inner_len) {
+    char buf[MD_CELL_MAX];
+    size_t len;
+
+    if (inner == NULL || inner_len < 4) {
+        return 0;
+    }
+
+    if (inner_len >= sizeof(buf)) {
+        inner_len = sizeof(buf) - 1;
+    }
+    memcpy(buf, inner, inner_len);
+    buf[inner_len] = '\0';
+    trim_spaces(buf);
+    len = strlen(buf);
+    if (len < 4) {
+        return 0;
+    }
+    return buf[0] == '*' && buf[1] == '*' && buf[len - 2] == '*' && buf[len - 1] == '*';
+}
+
+static void agnc_md_write_wrapped_bold(const char* inner, size_t inner_len, int use_vt) {
+    char buf[MD_CELL_MAX];
+    size_t len;
+
+    if (inner_len >= sizeof(buf)) {
+        inner_len = sizeof(buf) - 1;
+    }
+    memcpy(buf, inner, inner_len);
+    buf[inner_len] = '\0';
+    trim_spaces(buf);
+    len = strlen(buf);
+
+    if (use_vt) {
+        fputs(ANSI_BOLD, stdout);
+    }
+    write_plain(buf + 2, len - 4);
+    if (use_vt) {
+        fputs(ANSI_RESET, stdout);
+    }
 }
 
 static int markdown_plain_width(const char* text) {
@@ -182,7 +234,13 @@ static void write_inline_markdown_plain(const char* text, size_t text_len) {
         if (text[i] == '`') {
             const char* end = strchr(text + i + 1, '`');
             if (end && (size_t)(end - text) <= text_len) {
-                write_plain(text + i + 1, (size_t)(end - (text + i + 1)));
+                size_t inner_len = (size_t)(end - (text + i + 1));
+                if (agnc_md_is_wrapped_bold(text + i + 1, inner_len)) {
+                    agnc_md_write_wrapped_bold(text + i + 1, inner_len, 0);
+                    i = (size_t)(end - text) + 1;
+                    continue;
+                }
+                write_plain(text + i + 1, inner_len);
                 i = (size_t)(end - text) + 1;
                 continue;
             }
@@ -226,8 +284,14 @@ static void write_inline_markdown(const char* text, size_t text_len) {
         if (text[i] == '`') {
             const char* end = strchr(text + i + 1, '`');
             if (end && (size_t)(end - text) <= text_len) {
-                fputs(ANSI_CYAN, stdout);
-                write_plain(text + i + 1, (size_t)(end - (text + i + 1)));
+                size_t inner_len = (size_t)(end - (text + i + 1));
+                if (agnc_md_is_wrapped_bold(text + i + 1, inner_len)) {
+                    agnc_md_write_wrapped_bold(text + i + 1, inner_len, 1);
+                    i = (size_t)(end - text) + 1;
+                    continue;
+                }
+                fputs(ANSI_CODE, stdout);
+                write_plain(text + i + 1, inner_len);
                 fputs(ANSI_RESET, stdout);
                 i = (size_t)(end - text) + 1;
                 continue;
@@ -814,7 +878,7 @@ static void render_tree_block(const char* const* lines, int line_count, const ch
         } else {
             write_indent(continuation_indent);
         }
-        if (VT()) fputs(ANSI_CYAN, stdout);
+        if (VT()) fputs(ANSI_CODE, stdout);
         fputs(lines[i], stdout);
         if (VT()) fputs(ANSI_RESET, stdout);
         putchar('\n');
@@ -824,7 +888,7 @@ static void render_tree_block(const char* const* lines, int line_count, const ch
 static void render_preformatted_block(const char* const* lines, int line_count, const char* time_prefix, int* first_line,
     int continuation_indent) {
     int i = 0;
-    if (VT()) fputs(ANSI_CYAN, stdout);
+    if (VT()) fputs(ANSI_CODE, stdout);
     for (i = 0; i < line_count; i++) {
         if (*first_line) {
             if (time_prefix && time_prefix[0] != '\0') printf("%s - ", time_prefix);
@@ -856,6 +920,7 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
         if (line_len >= sizeof(line)) line_len = sizeof(line) - 1;
         memcpy(line, cursor, line_len);
         line[line_len] = '\0';
+        trim_spaces(line);
 
         if (is_fence_marker(line)) {
             const char* block_end = line_end ? line_end + 1 : cursor + line_len;

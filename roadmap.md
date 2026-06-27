@@ -789,12 +789,19 @@ Status: **selesai** (Windows-first, 2026-06).
 
 ### 11.5 Fase 4 Acceptance
 
-- Mode interaktif berjalan.
-- Streaming output tampil real-time.
-- Slash commands subset tersedia.
-- Session history tersimpan di `~/.agnc/sessions`.
-- `/compact` atau compact command sederhana tersedia.
-- Ctrl+C membatalkan request aktif tanpa merusak terminal.
+Status: **selesai** (Windows-first, 2026-06).
+
+- Mode interaktif default (`agnc` tanpa argumen) — REPL di `src/cli/repl.c`.
+- Streaming; render markdown sekali di akhir turn (bukan live duplikat).
+- Slash commands: `/help`, `/clear`, `/model`, `/provider`, `/doctor`, `/compact`, `/exit`.
+- Session tunggal: `~/.agnc/sessions/current.json` (`agnc_session_save` / `load`).
+- Bersihkan `current.json.tmp*` stale saat REPL startup (`agnc_session_cleanup_stale_temp_files`).
+- Auto-compact riwayat saat mendekati batas 64 pesan; truncate hasil tool besar.
+- System prompt menyertakan workspace root; diperbarui tiap request.
+- Permission/tool log di REPL ke stdout; spinner hanya saat tunggu HTTP.
+- Warna REPL: user hijau, inline code abu-abu, pesan sistem dim.
+- Ctrl+C membatalkan request HTTP aktif (`AGNC_STATUS_CANCELLED`).
+- Unit test: `test_session`, `test_markdown_render`.
 
 ### 11.6 Fase 5 Acceptance
 
