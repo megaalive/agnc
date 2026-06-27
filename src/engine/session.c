@@ -1876,3 +1876,124 @@ agnc_status_t agnc_session_usage_reset(const char *path)
     agnc_session_usage_init(&usage);
     return agnc_session_usage_save(path, &usage);
 }
+
+agnc_status_t agnc_session_meta_get(const char *path, const char *key, char **value_out)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || key == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    status = agnc_session_sqlite_meta_get(db, key, value_out);
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_meta_set(const char *path, const char *key, const char *value)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || key == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_meta_set(db, key, value);
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+    } else {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+    }
+
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_meta_delete(const char *path, const char *key)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || key == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_prepare_v2(db, "DELETE FROM meta WHERE key = ?", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        status = AGNC_STATUS_IO_ERROR;
+    } else if (sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC) != SQLITE_OK) {
+        status = AGNC_STATUS_IO_ERROR;
+    } else {
+        rc = sqlite3_step(stmt);
+        status = rc == SQLITE_DONE ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+    } else {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+    }
+
+    sqlite3_close(db);
+    return status;
+}

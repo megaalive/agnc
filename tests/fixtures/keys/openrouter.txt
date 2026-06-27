@@ -1,0 +1,2 @@
+sk-or-v1-test-key-from-file
+# OpenRouter — baris di bawah ini diabaikan.

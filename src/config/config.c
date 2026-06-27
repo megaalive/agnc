@@ -75,34 +75,48 @@ static char *agnc_config_read_file(const char *path)
     return buffer;
 }
 
+/* Baris pertama (trim whitespace) = API key; baris berikutnya diabaikan. */
 static char *agnc_config_extract_key_line(const char *text)
 {
-    const char *cursor = text;
-    const char *start;
-    const char *end;
+    const char *line_start;
+    const char *line_end;
     size_t length;
     char *key;
 
-    while (*cursor != '\0') {
-        if (strncmp(cursor, "sk-", 3) == 0) {
-            start = cursor;
-            end = cursor;
-            while (*end != '\0' && *end != '\r' && *end != '\n' && *end != ' ') {
-                end++;
-            }
-            length = (size_t)(end - start);
-            key = (char *)malloc(length + 1);
-            if (key == NULL) {
-                return NULL;
-            }
-            memcpy(key, start, length);
-            key[length] = '\0';
-            return key;
-        }
-        cursor++;
+    if (text == NULL || text[0] == '\0') {
+        return NULL;
     }
 
-    return NULL;
+    line_start = text;
+    while (*line_start == ' ' || *line_start == '\t') {
+        line_start++;
+    }
+
+    if (*line_start == '\0' || *line_start == '\r' || *line_start == '\n') {
+        return NULL;
+    }
+
+    line_end = line_start;
+    while (*line_end != '\0' && *line_end != '\r' && *line_end != '\n') {
+        line_end++;
+    }
+
+    while (line_end > line_start && (line_end[-1] == ' ' || line_end[-1] == '\t')) {
+        line_end--;
+    }
+
+    length = (size_t)(line_end - line_start);
+    if (length == 0) {
+        return NULL;
+    }
+
+    key = (char *)malloc(length + 1);
+    if (key == NULL) {
+        return NULL;
+    }
+    memcpy(key, line_start, length);
+    key[length] = '\0';
+    return key;
 }
 
 static char *agnc_config_read_api_key_from_file(const char *path)
@@ -256,7 +270,16 @@ static char *agnc_config_pick_string(
  * Resolusi provider: provider.active + providers{} + descriptor gateway + env.
  * Mengisi provider_id, gateway_id, base_url, model, api_key di config.
  */
-static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_t *config)
+typedef struct {
+    const char *force_active; /* Non-NULL: pakai id ini, abaikan provider.active / AGNC_PROVIDER. */
+    int ignore_base_url_env;  /* Abaikan AGNC_BASE_URL (tetap hormati providers.{id}.base_url). */
+    int ignore_model_env;     /* Abaikan AGNC_MODEL (tetap hormati providers.{id}.default_model). */
+} agnc_config_provider_opts_t;
+
+static agnc_status_t agnc_config_resolve_provider(
+    yyjson_val *root,
+    agnc_config_t *config,
+    const agnc_config_provider_opts_t *opts)
 {
     yyjson_val *provider_obj;
     yyjson_val *providers_obj;
@@ -266,6 +289,13 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
     const char *gateway_id;
     const agnc_gateway_descriptor_t *gateway;
     char *active_owned = NULL;
+    int ignore_base_url_env = 0;
+    int ignore_model_env = 0;
+
+    if (opts != NULL) {
+        ignore_base_url_env = opts->ignore_base_url_env;
+        ignore_model_env = opts->ignore_model_env;
+    }
 
     provider_obj = yyjson_obj_get(root, "provider");
     providers_obj = yyjson_obj_get(root, "providers");
@@ -273,11 +303,15 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
         return AGNC_STATUS_JSON_ERROR;
     }
 
-    active = getenv("AGNC_PROVIDER");
-    if (active == NULL || active[0] == '\0') {
-        value = yyjson_obj_get(provider_obj, "active");
-        if (value != NULL && yyjson_is_str(value)) {
-            active = yyjson_get_str(value);
+    if (opts != NULL && opts->force_active != NULL && opts->force_active[0] != '\0') {
+        active = opts->force_active;
+    } else {
+        active = getenv("AGNC_PROVIDER");
+        if (active == NULL || active[0] == '\0') {
+            value = yyjson_obj_get(provider_obj, "active");
+            if (value != NULL && yyjson_is_str(value)) {
+                active = yyjson_get_str(value);
+            }
         }
     }
     if (active == NULL || active[0] == '\0') {
@@ -288,6 +322,7 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
     if (active_owned == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
+    free(config->provider_id);
     config->provider_id = active_owned;
 
     entry = NULL;
@@ -302,6 +337,7 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
         gateway_id = active;
     }
 
+    free(config->gateway_id);
     config->gateway_id = agnc_strdup_local(gateway_id);
     if (config->gateway_id == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
@@ -316,25 +352,65 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
         char *provider_base = agnc_config_strdup_json_str(yyjson_obj_get(provider_obj, "base_url"));
         char *entry_base = agnc_config_strdup_json_str(yyjson_obj_get(entry, "base_url"));
 
-        config->base_url = agnc_config_pick_string(
-            "AGNC_BASE_URL", provider_base, entry_base, gateway->default_base_url);
+        free(config->base_url);
+        if (entry_base != NULL && entry_base[0] != '\0') {
+            config->base_url = entry_base;
+            entry_base = NULL;
+        } else if (!ignore_base_url_env) {
+            config->base_url = agnc_config_pick_string(
+                "AGNC_BASE_URL", provider_base, NULL, gateway->default_base_url);
+        } else if (provider_base != NULL && provider_base[0] != '\0') {
+            config->base_url = provider_base;
+            provider_base = NULL;
+        } else {
+            config->base_url = agnc_strdup_local(gateway->default_base_url);
+        }
         free(provider_base);
         free(entry_base);
+        if (config->base_url == NULL) {
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
     }
 
     {
         char *provider_model = agnc_config_strdup_json_str(yyjson_obj_get(provider_obj, "model"));
         char *entry_model = agnc_config_strdup_json_str(yyjson_obj_get(entry, "default_model"));
 
-        config->model = agnc_config_pick_string(
-            "AGNC_MODEL", provider_model, entry_model, gateway->default_model);
+        free(config->model);
+        if (entry_model != NULL && entry_model[0] != '\0') {
+            config->model = entry_model;
+            entry_model = NULL;
+        } else if (!ignore_model_env) {
+            config->model = agnc_config_pick_string(
+                "AGNC_MODEL", provider_model, NULL, gateway->default_model);
+        } else if (provider_model != NULL && provider_model[0] != '\0') {
+            config->model = provider_model;
+            provider_model = NULL;
+        } else {
+            config->model = agnc_strdup_local(gateway->default_model);
+        }
         free(provider_model);
         free(entry_model);
+        if (config->model == NULL) {
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
     }
 
-    value = yyjson_obj_get(provider_obj, "api_key_file");
-    if (value != NULL && yyjson_is_str(value)) {
-        config->api_key = agnc_config_read_api_key_from_file(yyjson_get_str(value));
+    free(config->api_key);
+    config->api_key = NULL;
+
+    if (entry != NULL) {
+        value = yyjson_obj_get(entry, "api_key_file");
+        if (value != NULL && yyjson_is_str(value)) {
+            config->api_key = agnc_config_read_api_key_from_file(yyjson_get_str(value));
+        }
+    }
+
+    if (config->api_key == NULL) {
+        value = yyjson_obj_get(provider_obj, "api_key_file");
+        if (value != NULL && yyjson_is_str(value)) {
+            config->api_key = agnc_config_read_api_key_from_file(yyjson_get_str(value));
+        }
     }
 
     if (config->api_key == NULL && entry != NULL) {
@@ -361,7 +437,7 @@ static agnc_status_t agnc_config_resolve_provider(yyjson_val *root, agnc_config_
         config->api_key = agnc_config_find_dev_api_key_for_gateway(config->gateway_id);
     }
 
-    if (config->api_key == NULL) {
+    if (config->api_key == NULL && gateway->requires_auth) {
         config->api_key = agnc_config_get_env_fallbacks();
     }
 
@@ -1030,7 +1106,7 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     root = yyjson_doc_get_root(doc);
     runtime = yyjson_obj_get(root, "runtime");
 
-    status = agnc_config_resolve_provider(root, config);
+    status = agnc_config_resolve_provider(root, config, NULL);
     if (status != AGNC_STATUS_OK) {
         yyjson_doc_free(doc);
         agnc_config_free(config);
@@ -1091,6 +1167,176 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
             agnc_config_free(config);
             return AGNC_STATUS_INVALID_ARGUMENT;
         }
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_config_read_root(const char *path, yyjson_doc **doc_out, yyjson_val **root_out)
+{
+    char *default_path = NULL;
+    const char *load_path = path;
+    char *json_text = NULL;
+    yyjson_doc *doc = NULL;
+    yyjson_val *root;
+
+    if (doc_out == NULL || root_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *doc_out = NULL;
+    *root_out = NULL;
+
+    if (load_path == NULL) {
+        agnc_status_t status = agnc_path_default_config(&default_path);
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+        load_path = default_path;
+    }
+
+    json_text = agnc_config_read_file(load_path);
+    free(default_path);
+    if (json_text == NULL) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    doc = yyjson_read(json_text, strlen(json_text), 0);
+    free(json_text);
+    if (doc == NULL) {
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    root = yyjson_doc_get_root(doc);
+    if (root == NULL || !yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    *doc_out = doc;
+    *root_out = root;
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_config_list_provider_ids(const char *path, char ***ids_out, size_t *count_out)
+{
+    yyjson_doc *doc = NULL;
+    yyjson_val *root;
+    yyjson_val *providers_obj;
+    yyjson_obj_iter iter;
+    char **ids = NULL;
+    size_t count = 0;
+    agnc_status_t status;
+
+    if (ids_out == NULL || count_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *ids_out = NULL;
+    *count_out = 0;
+
+    status = agnc_config_read_root(path, &doc, &root);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    providers_obj = yyjson_obj_get(root, "providers");
+    if (providers_obj == NULL || !yyjson_is_obj(providers_obj)) {
+        yyjson_doc_free(doc);
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    count = yyjson_obj_size(providers_obj);
+    if (count == 0) {
+        yyjson_doc_free(doc);
+        return AGNC_STATUS_OK;
+    }
+
+    ids = (char **)calloc(count, sizeof(char *));
+    if (ids == NULL) {
+        yyjson_doc_free(doc);
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    yyjson_obj_iter_init(providers_obj, &iter);
+    count = 0;
+    while (yyjson_obj_iter_has_next(&iter)) {
+        yyjson_val *key_val = yyjson_obj_iter_next(&iter);
+        const char *key;
+
+        if (key_val == NULL) {
+            continue;
+        }
+
+        key = yyjson_get_str(key_val);
+        if (key == NULL || key[0] == '\0') {
+            continue;
+        }
+
+        ids[count] = agnc_strdup_local(key);
+        if (ids[count] == NULL) {
+            agnc_config_free_provider_id_list(ids, count);
+            yyjson_doc_free(doc);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+        count++;
+    }
+
+    yyjson_doc_free(doc);
+    *ids_out = ids;
+    *count_out = count;
+    return AGNC_STATUS_OK;
+}
+
+void agnc_config_free_provider_id_list(char **ids, size_t count)
+{
+    size_t index;
+
+    if (ids == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(ids[index]);
+    }
+    free(ids);
+}
+
+agnc_status_t agnc_config_load_provider_entry(const char *path, const char *provider_id, agnc_config_t *config)
+{
+    yyjson_doc *doc = NULL;
+    yyjson_val *root;
+    agnc_config_provider_opts_t opts;
+    agnc_status_t status;
+    const agnc_gateway_descriptor_t *gateway;
+
+    if (provider_id == NULL || provider_id[0] == '\0' || config == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = agnc_config_read_root(path, &doc, &root);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    memset(&opts, 0, sizeof(opts));
+    opts.force_active = provider_id;
+    opts.ignore_base_url_env = 1;
+    opts.ignore_model_env = 1;
+
+    status = agnc_config_resolve_provider(root, config, &opts);
+    yyjson_doc_free(doc);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    gateway = agnc_registry_find_gateway(config->gateway_id);
+    if (gateway == NULL || config->base_url == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (gateway->requires_auth && (config->api_key == NULL || config->api_key[0] == '\0')) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
     return AGNC_STATUS_OK;

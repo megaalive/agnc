@@ -2,23 +2,23 @@
   "id": "opencode-local",
   "label": "OpenCode (lokal)",
   "category": "local",
-  "default_base_url": "http://127.0.0.1:4096/v1",
-  "default_model": "opencode/default",
+  "default_base_url": "http://127.0.0.1:4096",
+  "default_model": "opencode/big-pickle",
   "setup": {
     "requires_auth": false,
-    "auth_mode": "api-key",
-    "credential_env_vars": ["AGNC_API_KEY", "OPENCODE_API_KEY"]
+    "auth_mode": "basic",
+    "credential_env_vars": ["OPENCODE_SERVER_PASSWORD"]
   },
   "transport": {
-    "kind": "openai-compatible",
+    "kind": "opencode-native",
     "auth_header": {
       "name": "Authorization",
-      "scheme": "bearer"
+      "scheme": "basic"
     },
-    "endpoint_path": "/chat/completions",
-    "models_endpoint_path": "/models",
-    "supports_streaming": true,
-    "supports_tool_calls": true
+    "endpoint_path": "/session/{sessionID}/message",
+    "models_endpoint_path": "/config/providers",
+    "supports_streaming": false,
+    "supports_tool_calls": false
   },
   "catalog": {
     "source": "dynamic",

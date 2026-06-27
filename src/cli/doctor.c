@@ -16,6 +16,7 @@
 #include "agnc/status.h"
 #include "agnc/tool_path.h"
 #include "agnc/ollama.h"
+#include "agnc/opencode.h"
 #include "agnc/skills.h"
 #include "agnc/hooks.h"
 #include "agnc/version.h"
@@ -158,6 +159,19 @@ int agnc_cli_run_doctor(void)
             agnc_doctor_print_status("ollama", model_count > 0 ? "ok" : "missing", detail);
         } else {
             agnc_doctor_print_status("ollama", "missing", "start Ollama (ollama serve) or install from ollama.com");
+        }
+    }
+
+    /* OpenCode lokal (opsional) — native API di :4096 (opencode serve). */
+    {
+        char detail[256];
+        agnc_status_t opencode_status =
+            agnc_opencode_probe(AGNC_OPENCODE_DEFAULT_BASE_URL, detail, sizeof(detail));
+
+        if (opencode_status == AGNC_STATUS_OK) {
+            agnc_doctor_print_status("opencode", "ok", detail);
+        } else {
+            agnc_doctor_print_status("opencode", "missing", "start OpenCode (opencode serve) on :4096");
         }
     }
 

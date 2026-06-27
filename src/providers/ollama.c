@@ -50,7 +50,7 @@ agnc_status_t agnc_ollama_probe(
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    status = agnc_http_get(url, NULL, &response, &error_message);
+    status = agnc_http_get(url, NULL, &response, &error_message, NULL);
     free(url);
 
     if (status != AGNC_STATUS_OK) {

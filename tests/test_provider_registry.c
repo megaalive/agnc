@@ -8,11 +8,14 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <cmocka.h>
 
 #include "agnc/provider.h"
+#include "agnc/opencode.h"
+#include "agnc/status.h"
 
 static void test_registry_count(void **state)
 {
@@ -81,6 +84,42 @@ static void test_find_ollama(void **state)
     free(url);
 }
 
+static void test_find_opencode(void **state)
+{
+    const agnc_gateway_descriptor_t *gateway;
+
+    (void)state;
+    gateway = agnc_registry_find_gateway("opencode-local");
+    assert_non_null(gateway);
+    assert_string_equal(gateway->default_base_url, "http://127.0.0.1:4096");
+    assert_int_equal(gateway->transport_kind, AGNC_TRANSPORT_OPENCODE_NATIVE);
+    assert_int_equal(gateway->requires_auth, 0);
+    assert_int_equal(gateway->supports_tool_calls, 0);
+}
+
+static void test_opencode_parse_model(void **state)
+{
+    char *provider_id = NULL;
+    char *model_id = NULL;
+
+    (void)state;
+    assert_int_equal(
+        agnc_opencode_parse_model("opencode/big-pickle", &provider_id, &model_id),
+        AGNC_STATUS_OK);
+    assert_string_equal(provider_id, "opencode");
+    assert_string_equal(model_id, "big-pickle");
+    free(provider_id);
+    free(model_id);
+
+    provider_id = NULL;
+    model_id = NULL;
+    assert_int_equal(agnc_opencode_parse_model("big-pickle", &provider_id, &model_id), AGNC_STATUS_OK);
+    assert_string_equal(provider_id, "opencode");
+    assert_string_equal(model_id, "big-pickle");
+    free(provider_id);
+    free(model_id);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -90,6 +129,8 @@ int main(void)
         cmocka_unit_test(test_build_chat_url),
         cmocka_unit_test(test_resolve_catalog_model),
         cmocka_unit_test(test_find_ollama),
+        cmocka_unit_test(test_find_opencode),
+        cmocka_unit_test(test_opencode_parse_model),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

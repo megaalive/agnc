@@ -5,6 +5,8 @@
  */
 
 #include "agnc/provider.h"
+#include "agnc/opencode.h"
+#include "agnc/config.h"
 
 #include "agnc/net/http.h"
 
@@ -141,12 +143,135 @@ void agnc_provider_free_model_list(char **model_ids, size_t model_count)
     free(model_ids);
 }
 
-agnc_status_t agnc_provider_list_models(
-    const agnc_config_t *config,
+static agnc_status_t agnc_provider_list_catalog_models(
+    const agnc_gateway_descriptor_t *gateway,
     char ***model_ids,
     size_t *model_count)
 {
+    size_t index;
+    char **ids;
+
+    if (gateway == NULL || model_ids == NULL || model_count == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *model_ids = NULL;
+    *model_count = 0;
+
+    if (gateway->model_count == 0 || gateway->models == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    ids = (char **)calloc(gateway->model_count, sizeof(char *));
+    if (ids == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    for (index = 0; index < gateway->model_count; index++) {
+        const char *name = gateway->models[index].api_name;
+
+        if (name == NULL || name[0] == '\0') {
+            name = gateway->models[index].id;
+        }
+        if (name == NULL || name[0] == '\0') {
+            agnc_provider_free_model_list(ids, index);
+            return AGNC_STATUS_INVALID_ARGUMENT;
+        }
+
+        ids[index] = agnc_strdup_local(name);
+        if (ids[index] == NULL) {
+            agnc_provider_free_model_list(ids, index);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+    }
+
+    *model_ids = ids;
+    *model_count = gateway->model_count;
+    return AGNC_STATUS_OK;
+}
+
+static int agnc_provider_supports_dynamic_models(const agnc_gateway_descriptor_t *gateway)
+{
+    if (gateway == NULL) {
+        return 0;
+    }
+
+    return gateway->transport_kind == AGNC_TRANSPORT_OPENAI_COMPATIBLE ||
+           gateway->transport_kind == AGNC_TRANSPORT_OPENCODE_NATIVE;
+}
+
+static agnc_status_t agnc_provider_list_models_openai_compat(
+    const agnc_gateway_descriptor_t *gateway,
+    const agnc_config_t *config,
+    char ***model_ids,
+    size_t *model_count,
+    volatile int *cancel_flag);
+
+agnc_status_t agnc_provider_list_models(
+    const agnc_config_t *config,
+    char ***model_ids,
+    size_t *model_count,
+    volatile int *cancel_flag)
+{
     const agnc_gateway_descriptor_t *gateway;
+    agnc_status_t dynamic_status;
+
+    if (config == NULL || model_ids == NULL || model_count == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        return AGNC_STATUS_CANCELLED;
+    }
+
+    *model_ids = NULL;
+    *model_count = 0;
+
+    gateway = agnc_registry_find_gateway(config->gateway_id);
+    if (gateway == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (agnc_provider_supports_dynamic_models(gateway)) {
+        if (gateway->transport_kind == AGNC_TRANSPORT_OPENCODE_NATIVE) {
+            dynamic_status = agnc_opencode_list_models(config, model_ids, model_count, cancel_flag);
+        } else {
+            dynamic_status =
+                agnc_provider_list_models_openai_compat(gateway, config, model_ids, model_count, cancel_flag);
+        }
+
+        if (dynamic_status == AGNC_STATUS_CANCELLED) {
+            return AGNC_STATUS_CANCELLED;
+        }
+
+        if (dynamic_status == AGNC_STATUS_OK && *model_count > 0) {
+            return AGNC_STATUS_OK;
+        }
+
+        if (gateway->model_count > 0) {
+            agnc_provider_free_model_list(*model_ids, *model_count);
+            *model_ids = NULL;
+            *model_count = 0;
+            return agnc_provider_list_catalog_models(gateway, model_ids, model_count);
+        }
+
+        return dynamic_status;
+    }
+
+    if (gateway->model_count > 0) {
+        return agnc_provider_list_catalog_models(gateway, model_ids, model_count);
+    }
+
+    return AGNC_STATUS_INVALID_ARGUMENT;
+}
+
+static agnc_status_t agnc_provider_list_models_openai_compat(
+    const agnc_gateway_descriptor_t *gateway,
+    const agnc_config_t *config,
+    char ***model_ids,
+    size_t *model_count,
+    volatile int *cancel_flag)
+{
     char *url = NULL;
     char *auth_header = NULL;
     char *response = NULL;
@@ -159,21 +284,12 @@ agnc_status_t agnc_provider_list_models(
     char **ids = NULL;
     agnc_status_t status;
 
-    if (config == NULL || model_ids == NULL || model_count == NULL) {
+    if (gateway == NULL || config == NULL || model_ids == NULL || model_count == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
     *model_ids = NULL;
     *model_count = 0;
-
-    gateway = agnc_registry_find_gateway(config->gateway_id);
-    if (gateway == NULL) {
-        return AGNC_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (gateway->transport_kind != AGNC_TRANSPORT_OPENAI_COMPATIBLE) {
-        return AGNC_STATUS_INVALID_ARGUMENT;
-    }
 
     if (config->base_url == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -188,7 +304,7 @@ agnc_status_t agnc_provider_list_models(
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    status = agnc_http_get(url, auth_header, &response, &error_message);
+    status = agnc_http_get(url, auth_header, &response, &error_message, cancel_flag);
     free(url);
     free(auth_header);
 
@@ -250,4 +366,147 @@ agnc_status_t agnc_provider_list_models(
     *model_ids = ids;
     *model_count = count;
     return AGNC_STATUS_OK;
+}
+
+void agnc_provider_models_snapshots_free(agnc_provider_models_snapshot_t *snapshots, size_t count)
+{
+    size_t index;
+
+    if (snapshots == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(snapshots[index].provider_id);
+        free(snapshots[index].gateway_id);
+        free(snapshots[index].base_url);
+        free(snapshots[index].default_model);
+        free(snapshots[index].error_message);
+        agnc_provider_free_model_list(snapshots[index].model_ids, snapshots[index].model_count);
+    }
+    free(snapshots);
+}
+
+/*
+ * Iterasi entri providers{} di config; tiap provider dapat snapshot model + status.
+ * cancel_flag opsional — dipakai REPL saat /models (Ctrl+C antar provider/HTTP).
+ */
+agnc_status_t agnc_provider_discover_configured(
+    const char *config_path,
+    const char *provider_id_filter,
+    agnc_provider_models_snapshot_t **snapshots_out,
+    size_t *snapshot_count_out,
+    volatile int *cancel_flag)
+{
+    char **provider_ids = NULL;
+    size_t provider_count = 0;
+    agnc_provider_models_snapshot_t *snapshots = NULL;
+    size_t snapshot_count = 0;
+    size_t index;
+    agnc_status_t status;
+
+    if (snapshots_out == NULL || snapshot_count_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *snapshots_out = NULL;
+    *snapshot_count_out = 0;
+
+    if (provider_id_filter != NULL && provider_id_filter[0] != '\0') {
+        provider_ids = (char **)calloc(1, sizeof(char *));
+        if (provider_ids == NULL) {
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+        provider_ids[0] = agnc_strdup_local(provider_id_filter);
+        if (provider_ids[0] == NULL) {
+            free(provider_ids);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+        provider_count = 1;
+    } else {
+        status = agnc_config_list_provider_ids(config_path, &provider_ids, &provider_count);
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+
+    if (provider_count == 0) {
+        agnc_config_free_provider_id_list(provider_ids, provider_count);
+        return AGNC_STATUS_OK;
+    }
+
+    snapshots = (agnc_provider_models_snapshot_t *)calloc(provider_count, sizeof(*snapshots));
+    if (snapshots == NULL) {
+        agnc_config_free_provider_id_list(provider_ids, provider_count);
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    for (index = 0; index < provider_count; index++) {
+        agnc_config_t config;
+        agnc_provider_models_snapshot_t *snapshot = &snapshots[snapshot_count];
+
+        if (cancel_flag != NULL && *cancel_flag) {
+            status = AGNC_STATUS_CANCELLED;
+            goto cleanup;
+        }
+
+        agnc_config_init(&config);
+        snapshot->provider_id = agnc_strdup_local(provider_ids[index]);
+        if (snapshot->provider_id == NULL) {
+            agnc_config_free(&config);
+            status = AGNC_STATUS_OUT_OF_MEMORY;
+            goto cleanup;
+        }
+
+        status = agnc_config_load_provider_entry(config_path, provider_ids[index], &config);
+        snapshot->status = status;
+        if (status != AGNC_STATUS_OK) {
+            snapshot->error_message = agnc_strdup_local(agnc_status_to_string(status));
+            if (snapshot->error_message == NULL) {
+                agnc_config_free(&config);
+                status = AGNC_STATUS_OUT_OF_MEMORY;
+                goto cleanup;
+            }
+            agnc_config_free(&config);
+            snapshot_count++;
+            continue;
+        }
+
+        snapshot->gateway_id = agnc_strdup_local(config.gateway_id);
+        snapshot->base_url = agnc_strdup_local(config.base_url);
+        snapshot->default_model = agnc_strdup_local(config.model);
+        if (snapshot->gateway_id == NULL || snapshot->base_url == NULL || snapshot->default_model == NULL) {
+            agnc_config_free(&config);
+            status = AGNC_STATUS_OUT_OF_MEMORY;
+            goto cleanup;
+        }
+
+        snapshot->status = agnc_provider_list_models(&config, &snapshot->model_ids, &snapshot->model_count, cancel_flag);
+        if (snapshot->status == AGNC_STATUS_CANCELLED) {
+            agnc_config_free(&config);
+            status = AGNC_STATUS_CANCELLED;
+            goto cleanup;
+        }
+        if (snapshot->status != AGNC_STATUS_OK) {
+            snapshot->error_message = agnc_strdup_local(agnc_status_to_string(snapshot->status));
+            if (snapshot->error_message == NULL) {
+                agnc_config_free(&config);
+                status = AGNC_STATUS_OUT_OF_MEMORY;
+                goto cleanup;
+            }
+        }
+
+        agnc_config_free(&config);
+        snapshot_count++;
+    }
+
+    agnc_config_free_provider_id_list(provider_ids, provider_count);
+    *snapshots_out = snapshots;
+    *snapshot_count_out = snapshot_count;
+    return AGNC_STATUS_OK;
+
+cleanup:
+    agnc_config_free_provider_id_list(provider_ids, provider_count);
+    agnc_provider_models_snapshots_free(snapshots, snapshot_count);
+    return status;
 }

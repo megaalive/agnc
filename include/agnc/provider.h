@@ -16,7 +16,8 @@
 typedef enum {
     AGNC_TRANSPORT_OPENAI_COMPATIBLE,
     AGNC_TRANSPORT_GEMINI_NATIVE,
-    AGNC_TRANSPORT_LOCAL
+    AGNC_TRANSPORT_LOCAL,
+    AGNC_TRANSPORT_OPENCODE_NATIVE
 } agnc_transport_kind_t;
 
 typedef struct {
@@ -65,14 +66,39 @@ char *agnc_provider_build_auth_header(const agnc_gateway_descriptor_t *gateway, 
 const char *agnc_provider_resolve_api_model(const agnc_gateway_descriptor_t *gateway, const char *model);
 
 /*
- * Ambil daftar model dari endpoint /models (OpenAI-compatible).
+ * Ambil daftar model untuk provider aktif (API dinamis atau katalog gateway).
  * model_ids dan isinya dialokasikan; pemanggil memanggil agnc_provider_free_model_list().
  */
 agnc_status_t agnc_provider_list_models(
     const agnc_config_t *config,
     char ***model_ids,
-    size_t *model_count);
+    size_t *model_count,
+    volatile int *cancel_flag);
 
 void agnc_provider_free_model_list(char **model_ids, size_t model_count);
+
+typedef struct {
+    char *provider_id;
+    char *gateway_id;
+    char *base_url;
+    char *default_model;
+    agnc_status_t status;
+    char *error_message;
+    char **model_ids;
+    size_t model_count;
+} agnc_provider_models_snapshot_t;
+
+void agnc_provider_models_snapshots_free(agnc_provider_models_snapshot_t *snapshots, size_t count);
+
+/*
+ * Discovery model untuk semua (atau satu) provider di ~/.agnc.json.
+ * provider_id_filter NULL = semua entri providers{}.
+ */
+agnc_status_t agnc_provider_discover_configured(
+    const char *config_path,
+    const char *provider_id_filter,
+    agnc_provider_models_snapshot_t **snapshots_out,
+    size_t *snapshot_count_out,
+    volatile int *cancel_flag);
 
 #endif /* AGNC_PROVIDER_H */

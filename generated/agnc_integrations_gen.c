@@ -106,26 +106,25 @@ static const agnc_gateway_descriptor_t agnc_gateway_ollama = {
 };
 
 static const char *const agnc_env_opencode_local[] = {
-    "AGNC_API_KEY",
-    "OPENCODE_API_KEY",
+    "OPENCODE_SERVER_PASSWORD",
     NULL
 };
 
 static const agnc_gateway_descriptor_t agnc_gateway_opencode_local = {
     "opencode-local",
     "OpenCode (lokal)",
-    "http://127.0.0.1:4096/v1",
-    "opencode/default",
-    AGNC_TRANSPORT_OPENAI_COMPATIBLE,
+    "http://127.0.0.1:4096",
+    "opencode/big-pickle",
+    AGNC_TRANSPORT_OPENCODE_NATIVE,
     "Authorization",
-    "bearer",
-    "/chat/completions",
-    "/models",
-    1,
-    1,
+    "basic",
+    "/session/{sessionID}/message",
+    "/config/providers",
+    0,
+    0,
     0,
     agnc_env_opencode_local,
-    2,
+    1,
     NULL,
     0,
 };

@@ -87,7 +87,7 @@ agnc_status_t agnc_tool_web_fetch_execute(const char *arguments_json, char **res
 
     yyjson_doc_free(doc);
 
-    status = agnc_http_get(url, NULL, &body, &error_message);
+    status = agnc_http_get(url, NULL, &body, &error_message, NULL);
     if (status != AGNC_STATUS_OK) {
         if (error_message != NULL) {
             *result_text = error_message;

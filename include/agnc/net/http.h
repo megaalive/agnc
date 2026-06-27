@@ -27,6 +27,16 @@ agnc_status_t agnc_http_get(
     const char *url,
     const char *auth_header,
     char **response_body,
-    char **error_message);
+    char **error_message,
+    volatile int *cancel_flag);
+
+/* POST sinkron; mengembalikan body respons utuh (non-SSE). */
+agnc_status_t agnc_http_post(
+    const char *url,
+    const char *auth_header,
+    const char *json_body,
+    char **response_body,
+    char **error_message,
+    volatile int *cancel_flag);
 
 #endif

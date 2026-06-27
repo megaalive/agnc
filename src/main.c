@@ -33,6 +33,9 @@ int main(int argc, char **argv)
         exit_code = agnc_cli_run_version();
     } else if (options.show_doctor) {
         exit_code = agnc_cli_run_doctor();
+    } else if (options.show_models) {
+        exit_code = agnc_cli_run_models(
+            options.models_provider_filter, options.models_name_filter, options.models_json);
     } else if (options.show_print) {
         exit_code = agnc_cli_run_print(options.print_prompt, options.no_tools, options.auto_approve);
     } else if (options.show_interactive) {

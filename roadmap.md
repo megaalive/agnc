@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.16+) | Sub-agent, OAuth, gRPC, TUI | backlog |
+| **6. Fitur besar** (Fase 6.17+) | Sub-agent, OAuth, gRPC, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -993,6 +993,26 @@ Status: **selesai** (Windows-first, 2026-06).
 - `agnc doctor` baris `ollama` — probe `/v1/models`.
 - REPL `/model` tanpa argumen — daftar model untuk gateway katalog dinamis (Ollama, dll.).
 - Provider `ollama` di `providers{}` contoh config.
+
+### 11.22 Fase 6.16 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Transport `AGNC_TRANSPORT_OPENCODE_NATIVE` — client HTTP ke `opencode serve` (session + message), bukan OpenAI-compat.
+- Meta SQLite `opencode_session_id` menghubungkan sesi agnc ke session OpenCode.
+- Config multi-provider: `providers{id}` + resolusi `base_url`/`model`/`api_key` per entri; `agnc_config_list_provider_ids`.
+- CLI `agnc models [provider] [filter]` (`--json`, `--filter`); REPL `/models` dengan filter substring.
+- REPL `/model` tanpa argumen — ringkasan model aktif (bukan dump API); discovery penuh lewat `/models`.
+- Cancel Ctrl+C selama HTTP (chat + discovery) via polling libcurl; REPL tetap hidup.
+
+### 12.12 Urutan kerja Fase 6.16 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.16.1** | Descriptor opencode-native + `opencode.c` (probe, models, turn) | **Selesai** |
+| **6.16.2** | Config multi-provider + discovery `agnc_provider_discover_configured` | **Selesai** |
+| **6.16.3** | CLI `models` + REPL `/models`; `/model` ringkasan | **Selesai** |
+| **6.16.4** | Cancel HTTP (GET/POST/stream) + test + docs | **Selesai** |
 
 ### 12.11 Urutan kerja Fase 6.15 (dikunci 2026-06)
 
@@ -1195,7 +1215,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.16+** sebelum **6.15** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.17+** sebelum **6.16** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1311,7 +1331,16 @@ Tasks:
 - Gateway `ollama` + probe doctor. — `descriptors/gateways/ollama.json`, `ollama.c`
 - `/model` list dinamis; provider tanpa auth. — `repl.c`, `provider.c`
 
-#### Fase 6.16+ — Backlog fitur besar
+#### Fase 6.16 — OpenCode native + model discovery — **selesai**
+
+Tasks:
+
+- Transport opencode-native + client session/message. — `opencode.c`, `query.c`, `session.c`
+- Config `providers{}` multi-entry + discovery semua provider. — `config.c`, `provider.c`
+- CLI `agnc models` + REPL `/models` (filter); `/model` ringkasan. — `models.c`, `repl.c`
+- Cancel Ctrl+C pada HTTP libcurl. — `http.c`, `repl.c`
+
+#### Fase 6.17+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 
@@ -1319,7 +1348,6 @@ Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 - Sub-agent
 - OAuth
 - Anthropic native
-- Ollama/local model polish
 - gRPC server
 - TUI lebih kaya
 - Token usage dan cost tracking

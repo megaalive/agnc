@@ -92,4 +92,9 @@ agnc_status_t agnc_session_usage_accumulate(
 
 agnc_status_t agnc_session_usage_reset(const char *path);
 
+/* Meta key/value di tabel meta sesi SQLite (mis. opencode_session_id). */
+agnc_status_t agnc_session_meta_get(const char *path, const char *key, char **value_out);
+agnc_status_t agnc_session_meta_set(const char *path, const char *key, const char *value);
+agnc_status_t agnc_session_meta_delete(const char *path, const char *key);
+
 #endif /* AGNC_SESSION_H */

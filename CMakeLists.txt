@@ -22,11 +22,19 @@ set(AGNC_PROVIDER_SOURCES
     src/providers/provider.c
 )
 
+set(AGNC_OPENCODE_SUPPORT_SOURCES
+    src/providers/opencode.c
+    src/engine/session.c
+    src/engine/conversation.c
+    src/net/sse.c
+)
+
 add_executable(agnc
     src/main.c
     src/cli/args.c
     src/cli/console.c
     src/cli/doctor.c
+    src/cli/models.c
     src/cli/markdown_render.c
     src/cli/print.c
     src/cli/repl.c
@@ -38,6 +46,7 @@ add_executable(agnc
     src/engine/skills.c
     src/engine/hooks.c
     src/providers/ollama.c
+    src/providers/opencode.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c
@@ -224,9 +233,12 @@ if(AGNC_BUILD_TESTS)
 
     add_executable(test_provider_registry
         tests/test_provider_registry.c
-        generated/agnc_integrations_gen.c
-        src/integrations/registry.c
-        src/providers/provider.c
+        ${AGNC_PROVIDER_SOURCES}
+        ${AGNC_OPENCODE_SUPPORT_SOURCES}
+        src/config/config.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
         src/net/http.c
     )
 
@@ -235,7 +247,7 @@ if(AGNC_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/generated
     )
 
-    target_link_libraries(test_provider_registry PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    target_link_libraries(test_provider_registry PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     agnc_set_compiler_warnings(test_provider_registry)
 
     add_test(NAME test_provider_registry COMMAND test_provider_registry)
@@ -249,6 +261,7 @@ if(AGNC_BUILD_TESTS)
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
         src/providers/provider.c
+        ${AGNC_OPENCODE_SUPPORT_SOURCES}
         src/net/http.c
     )
 
@@ -258,7 +271,7 @@ if(AGNC_BUILD_TESTS)
     )
 
     target_compile_definitions(test_config_provider PRIVATE AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    target_link_libraries(test_config_provider PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    target_link_libraries(test_config_provider PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     agnc_set_compiler_warnings(test_config_provider)
 
     add_test(NAME test_config_provider COMMAND test_config_provider)
@@ -338,6 +351,7 @@ if(AGNC_BUILD_TESTS)
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
         src/providers/provider.c
+        ${AGNC_OPENCODE_SUPPORT_SOURCES}
         src/net/http.c
     )
 
@@ -350,7 +364,7 @@ if(AGNC_BUILD_TESTS)
         AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         MCP_MOCK_SERVER="$<TARGET_FILE:mcp_mock_server>"
     )
-    target_link_libraries(test_mcp_registry PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    target_link_libraries(test_mcp_registry PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     add_dependencies(test_mcp_registry mcp_mock_server)
     agnc_set_compiler_warnings(test_mcp_registry)
 
@@ -370,6 +384,7 @@ if(AGNC_BUILD_TESTS)
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
         src/providers/provider.c
+        ${AGNC_OPENCODE_SUPPORT_SOURCES}
         src/net/http.c
     )
 
@@ -379,7 +394,7 @@ if(AGNC_BUILD_TESTS)
     )
 
     target_compile_definitions(test_mcp_tools PRIVATE MCP_MOCK_SERVER="$<TARGET_FILE:mcp_mock_server>")
-    target_link_libraries(test_mcp_tools PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    target_link_libraries(test_mcp_tools PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     add_dependencies(test_mcp_tools mcp_mock_server)
     agnc_set_compiler_warnings(test_mcp_tools)
 
@@ -399,6 +414,7 @@ if(AGNC_BUILD_TESTS)
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
         src/providers/provider.c
+        ${AGNC_OPENCODE_SUPPORT_SOURCES}
         src/net/http.c
     )
 
@@ -408,7 +424,7 @@ if(AGNC_BUILD_TESTS)
     )
 
     target_compile_definitions(test_mcp_filesystem_e2e PRIVATE AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-    target_link_libraries(test_mcp_filesystem_e2e PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    target_link_libraries(test_mcp_filesystem_e2e PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     agnc_set_compiler_warnings(test_mcp_filesystem_e2e)
 
     add_test(NAME test_mcp_filesystem_e2e COMMAND test_mcp_filesystem_e2e)

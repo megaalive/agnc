@@ -45,6 +45,9 @@ void agnc_sse_parser_free(agnc_sse_parser_t *parser);
 agnc_status_t agnc_sse_parser_feed(agnc_sse_parser_t *parser, const char *chunk, size_t length);
 agnc_status_t agnc_sse_parser_flush(agnc_sse_parser_t *parser);
 
+/* Set jawaban assistant langsung (transport non-SSE, mis. OpenCode native). */
+void agnc_sse_parser_set_assistant_content(agnc_sse_parser_t *parser, const char *content);
+
 /* Cetak content ke stdout; reasoning ke stderr hanya jika verbose. */
 void agnc_sse_parser_finalize_turn(agnc_sse_parser_t *parser);
 

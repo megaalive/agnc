@@ -22,6 +22,7 @@ typedef struct {
     long *usage_completion_tokens;
     long *usage_total_tokens;
     const char *session_name;      /* Opsional: nama sesi untuk hook payload. */
+    const char *session_sqlite_path; /* Opsional: path ~/.agnc/sessions/<nama>.sqlite (OpenCode meta). */
 } agnc_query_options_t;
 
 /*

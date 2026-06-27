@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "api_key_env": "AGNC_TEST_API_KEY"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "default_model": "openrouter/owl-alpha"
+    },
+    "ollama": {
+      "gateway": "ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "default_model": "llama3.2"
+    }
+  },
+  "runtime": {
+    "stream": false
+  }
+}

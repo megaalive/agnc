@@ -22,6 +22,10 @@ typedef struct {
     int show_help;    /* `agnc --help` */
     int show_interactive; /* `agnc` tanpa argumen — REPL interaktif */
     int show_print;   /* `agnc --print "prompt"` */
+    int show_models;  /* `agnc models [provider_id]` */
+    int models_json;  /* `agnc models --json` */
+    char *models_provider_filter;
+    char *models_name_filter; /* `agnc models --filter nemotron` */
     int no_tools;     /* `agnc --no-tools` — chat tanpa tool schema */
     int auto_approve; /* `agnc --yes` — setujui shell tanpa prompt */
     char *print_prompt; /* Prompt untuk mode headless */
@@ -59,6 +63,24 @@ static inline int agnc_cli_run_help(void)
 
 /* Jalankan mode headless --print; return exit code proses. */
 int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve);
+
+/* Discovery model untuk semua provider config; filter opsional. */
+int agnc_cli_run_models(const char *provider_id_filter, const char *name_filter, int json_output);
+
+/* Sama seperti run_models, tapi pakai provider/model aktif REPL untuk marker *.
+ * Return 0 sukses, 1 error, 2 dibatalkan (cancel_flag). */
+int agnc_cli_show_models(
+    const char *provider_id_filter,
+    const char *name_filter,
+    const char *active_provider_id,
+    const char *active_model,
+    volatile int *cancel_flag);
+
+/* Parse argumen teks REPL/CLI untuk /models. */
+agnc_status_t agnc_cli_models_parse_query(
+    const char *args,
+    char **provider_out,
+    char **name_filter_out);
 
 /* Jalankan REPL interaktif (Fase 4). */
 int agnc_cli_run_interactive(void);

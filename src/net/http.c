@@ -15,6 +15,9 @@
 
 #define AGNC_HTTP_BODY_INITIAL 4096
 
+static void agnc_http_curl_set_cancel_poll(CURL *curl, volatile int *cancel_flag);
+static agnc_status_t agnc_http_map_curl_code(CURLcode code, volatile int *cancel_flag);
+
 static char *agnc_strdup_local(const char *value)
 {
 #ifdef _MSC_VER
@@ -236,6 +239,7 @@ agnc_status_t agnc_http_post_stream(
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    agnc_http_curl_set_cancel_poll(curl, state.cancel_flag);
 
     code = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
@@ -243,17 +247,23 @@ agnc_status_t agnc_http_post_stream(
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
+    if (state.status == AGNC_STATUS_CANCELLED) {
+        free(state.response_body);
+        return AGNC_STATUS_CANCELLED;
+    }
+
     if (state.status != AGNC_STATUS_OK) {
         free(state.response_body);
         return state.status;
     }
 
     if (code != CURLE_OK) {
-        if (error_message != NULL) {
+        agnc_status_t mapped = agnc_http_map_curl_code(code, state.cancel_flag);
+        if (error_message != NULL && mapped == AGNC_STATUS_HTTP_ERROR) {
             *error_message = agnc_strdup_local(error_buffer);
         }
         free(state.response_body);
-        return AGNC_STATUS_HTTP_ERROR;
+        return mapped;
     }
 
     if (http_code < 200 || http_code >= 300) {
@@ -273,6 +283,79 @@ typedef struct {
     size_t response_length;
     size_t response_capacity;
 } agnc_http_get_state_t;
+
+#if LIBCURL_VERSION_NUM >= 0x072000
+/* Poll cancel_flag selama transfer; return 1 abort curl (→ AGNC_STATUS_CANCELLED). */
+static int agnc_http_curl_xferinfo(
+    void *userdata,
+    curl_off_t dltotal,
+    curl_off_t dlnow,
+    curl_off_t ultotal,
+    curl_off_t ulnow)
+{
+    volatile int *cancel_flag = (volatile int *)userdata;
+
+    (void)dltotal;
+    (void)dlnow;
+    (void)ultotal;
+    (void)ulnow;
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        return 1;
+    }
+    return 0;
+}
+#else
+static int agnc_http_curl_progress(
+    void *userdata,
+    double dltotal,
+    double dlnow,
+    double ultotal,
+    double ulnow)
+{
+    volatile int *cancel_flag = (volatile int *)userdata;
+
+    (void)dltotal;
+    (void)dlnow;
+    (void)ultotal;
+    (void)ulnow;
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        return 1;
+    }
+    return 0;
+}
+#endif
+
+static void agnc_http_curl_set_cancel_poll(CURL *curl, volatile int *cancel_flag)
+{
+    if (curl == NULL || cancel_flag == NULL) {
+        return;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+#if LIBCURL_VERSION_NUM >= 0x072000
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, agnc_http_curl_xferinfo);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, (void *)cancel_flag);
+#else
+    curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, agnc_http_curl_progress);
+    curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, (void *)cancel_flag);
+#endif
+}
+
+static agnc_status_t agnc_http_map_curl_code(CURLcode code, volatile int *cancel_flag)
+{
+    if (code == CURLE_ABORTED_BY_CALLBACK) {
+        return AGNC_STATUS_CANCELLED;
+    }
+    if (cancel_flag != NULL && *cancel_flag) {
+        return AGNC_STATUS_CANCELLED;
+    }
+    if (code != CURLE_OK) {
+        return AGNC_STATUS_HTTP_ERROR;
+    }
+    return AGNC_STATUS_OK;
+}
 
 static size_t agnc_http_get_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 {
@@ -299,7 +382,8 @@ agnc_status_t agnc_http_get(
     const char *url,
     const char *auth_header,
     char **response_body,
-    char **error_message)
+    char **error_message,
+    volatile int *cancel_flag)
 {
     CURL *curl;
     CURLcode code;
@@ -307,6 +391,7 @@ agnc_status_t agnc_http_get(
     agnc_http_get_state_t state;
     long http_code = 0;
     char error_buffer[CURL_ERROR_SIZE];
+    agnc_status_t mapped;
 
     if (url == NULL || response_body == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -315,6 +400,10 @@ agnc_status_t agnc_http_get(
     *response_body = NULL;
     if (error_message != NULL) {
         *error_message = NULL;
+    }
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        return AGNC_STATUS_CANCELLED;
     }
 
     curl = curl_easy_init();
@@ -337,6 +426,7 @@ agnc_status_t agnc_http_get(
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    agnc_http_curl_set_cancel_poll(curl, cancel_flag);
 
     code = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
@@ -344,12 +434,97 @@ agnc_status_t agnc_http_get(
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
-    if (code != CURLE_OK) {
-        if (error_message != NULL) {
+    mapped = agnc_http_map_curl_code(code, cancel_flag);
+    if (mapped != AGNC_STATUS_OK) {
+        if (mapped == AGNC_STATUS_HTTP_ERROR && error_message != NULL) {
             *error_message = agnc_strdup_local(error_buffer);
         }
         free(state.response_body);
+        return mapped;
+    }
+
+    if (http_code < 200 || http_code >= 300) {
+        if (error_message != NULL) {
+            *error_message = agnc_http_format_status_error(http_code, state.response_body);
+        }
+        free(state.response_body);
         return AGNC_STATUS_HTTP_ERROR;
+    }
+
+    *response_body = state.response_body;
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_http_post(
+    const char *url,
+    const char *auth_header,
+    const char *json_body,
+    char **response_body,
+    char **error_message,
+    volatile int *cancel_flag)
+{
+    CURL *curl;
+    CURLcode code;
+    struct curl_slist *headers = NULL;
+    agnc_http_get_state_t state;
+    long http_code = 0;
+    char error_buffer[CURL_ERROR_SIZE];
+    agnc_status_t mapped;
+
+    if (url == NULL || json_body == NULL || response_body == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *response_body = NULL;
+    if (error_message != NULL) {
+        *error_message = NULL;
+    }
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        return AGNC_STATUS_CANCELLED;
+    }
+
+    curl = curl_easy_init();
+    if (curl == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    memset(&state, 0, sizeof(state));
+
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (auth_header != NULL && auth_header[0] != '\0') {
+        headers = curl_slist_append(headers, auth_header);
+    }
+    headers = curl_slist_append(headers, "Accept: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, agnc_http_get_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &state);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    agnc_http_curl_set_cancel_poll(curl, cancel_flag);
+
+    code = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (cancel_flag != NULL && *cancel_flag) {
+        free(state.response_body);
+        return AGNC_STATUS_CANCELLED;
+    }
+
+    mapped = agnc_http_map_curl_code(code, cancel_flag);
+    if (mapped != AGNC_STATUS_OK) {
+        if (mapped == AGNC_STATUS_HTTP_ERROR && error_message != NULL) {
+            *error_message = agnc_strdup_local(error_buffer);
+        }
+        free(state.response_body);
+        return mapped;
     }
 
     if (http_code < 200 || http_code >= 300) {

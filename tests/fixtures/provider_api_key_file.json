@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "model": "owl-alpha"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "default_model": "openrouter/owl-alpha",
+      "api_key_file": "PLACEHOLDER_OPENROUTER_KEY"
+    },
+    "gemini": {
+      "gateway": "gemini",
+      "default_model": "gemini-2.0-flash",
+      "api_key_file": "PLACEHOLDER_GEMINI_KEY"
+    }
+  },
+  "runtime": {
+    "stream": false
+  }
+}

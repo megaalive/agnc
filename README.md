@@ -68,7 +68,7 @@ Jalankan tanpa argumen untuk REPL chat dengan streaming:
 .\out\build\x64-Debug\agnc.exe
 ```
 
-Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/session`, `/doctor`, `/exit`.
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/models`, `/provider`, `/mcp`, `/session`, `/doctor`, `/exit`.
 
 **Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, dan wrap multi-baris — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`) dan sesi input konsol (`src/cli/console.c`). Di Unix fallback ke `fgets` dengan history.
 
@@ -80,9 +80,11 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/
 
 **Hooks:** perintah shell per event (`session_start`, `pre_turn`, `post_turn`, `pre_tool`, `post_tool`) di `hooks` config. Script membaca payload JSON dari env `AGNC_HOOK_PAYLOAD_FILE`. `pre_tool` dengan exit ≠ 0 memblokir tool. REPL: `/hooks`.
 
-**Ollama (lokal):** set `provider.active` ke `ollama` (atau `/provider ollama`) dengan `base_url` `http://127.0.0.1:11434/v1`. Tidak perlu API key lokal. `agnc doctor` memeriksa Ollama; `/model` tanpa argumen menampilkan model terpasang.
+**Ollama (lokal):** set `provider.active` ke `ollama` (atau `/provider ollama`) dengan `base_url` `http://127.0.0.1:11434/v1`. Tidak perlu API key lokal. `agnc doctor` memeriksa Ollama.
 
-Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
+**OpenCode (lokal):** jalankan `opencode serve` (default `http://127.0.0.1:4096`). Set `provider.active` ke `opencode` — transport native (bukan OpenAI-compat). Auth opsional lewat env `OPENCODE_SERVER_PASSWORD`. Session OpenCode di-link otomatis per sesi SQLite agnc.
+
+**Model:** `/model` tanpa argumen menampilkan model aktif; `/model <id>` mengganti model. Discovery semua provider: `agnc models [provider] [filter]` atau REPL `/models` (substring filter, case-insensitive). Ctrl+C membatalkan request chat maupun discovery. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
 Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: turn N · sesi M`). `/usage` menampilkan total sesi; total disimpan di meta SQLite sesi. `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
 
@@ -109,6 +111,7 @@ Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provid
 | `--no-tools` | Chat tanpa tool schema |
 | `--yes` / `-y` | Setujui otomatis: shell, tulis/edit file, MCP, `web_fetch` |
 | `doctor` | Cek config, libcurl, yyjson, ripgrep, ctags, koneksi MCP |
+| `models [provider] [filter]` | Discovery model semua provider config (`--json`, `--filter`) |
 | `--version` | Tampilkan versi |
 
 ### Tool bawaan
@@ -181,4 +184,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.13** — token usage persist per sesi (`/usage`): selesai
 - **Fase 6.14** — hooks shell per event agent: selesai
 - **Fase 6.15** — gateway Ollama lokal + doctor + `/model` list: selesai
-- **Fase 6.16+** — sub-agent, OAuth, gRPC, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.16** — OpenCode native, `agnc models`, cancel Ctrl+C HTTP: selesai
+- **Fase 6.17+** — sub-agent, OAuth, gRPC, TUI: backlog (lihat `roadmap.md`)

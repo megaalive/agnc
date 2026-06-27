@@ -13,6 +13,7 @@
 #include "agnc/hooks.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
+#include "agnc/opencode.h"
 #include "agnc/session.h"
 #include "agnc/skills.h"
 #include "agnc/status.h"
@@ -945,13 +946,49 @@ static agnc_status_t agnc_execute_tool(
     return AGNC_STATUS_TOOL_FAILED;
 }
 
+static const char *agnc_query_system_text(const agnc_conversation_t *conversation)
+{
+    const agnc_conversation_message_t *msg;
+
+    if (conversation == NULL || conversation->count == 0) {
+        return NULL;
+    }
+
+    msg = agnc_conversation_at(conversation, 0);
+    if (msg == NULL || msg->role == NULL || strcmp(msg->role, "system") != 0) {
+        return NULL;
+    }
+
+    return msg->content;
+}
+
+static const char *agnc_query_last_user_text(const agnc_conversation_t *conversation)
+{
+    size_t index;
+
+    if (conversation == NULL) {
+        return NULL;
+    }
+
+    for (index = conversation->count; index > 0; index--) {
+        const agnc_conversation_message_t *msg = agnc_conversation_at(conversation, index - 1);
+
+        if (msg != NULL && msg->role != NULL && strcmp(msg->role, "user") == 0) {
+            return msg->content;
+        }
+    }
+
+    return NULL;
+}
+
 static agnc_status_t agnc_run_provider_turn(
     const agnc_config_t *config,
     const agnc_conversation_t *conversation,
     agnc_sse_parser_t *parser,
     char **error_message,
     volatile int *cancel_flag,
-    const agnc_mcp_tool_catalog_t *mcp_catalog)
+    const agnc_mcp_tool_catalog_t *mcp_catalog,
+    const char *session_sqlite_path)
 {
     const agnc_gateway_descriptor_t *gateway;
     char *url;
@@ -962,6 +999,24 @@ static agnc_status_t agnc_run_provider_turn(
     gateway = agnc_registry_find_gateway(config->gateway_id);
     if (gateway == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (gateway->transport_kind == AGNC_TRANSPORT_OPENCODE_NATIVE) {
+        const char *system_text = agnc_query_system_text(conversation);
+        const char *user_text = agnc_query_last_user_text(conversation);
+
+        if (user_text == NULL || user_text[0] == '\0') {
+            return AGNC_STATUS_INVALID_ARGUMENT;
+        }
+
+        return agnc_opencode_run_turn(
+            config,
+            session_sqlite_path,
+            system_text,
+            user_text,
+            parser,
+            error_message,
+            cancel_flag);
     }
 
     url = agnc_provider_build_chat_url(gateway, config->base_url);
@@ -1206,6 +1261,8 @@ agnc_status_t agnc_query_run(
     const agnc_mcp_registry_t *mcp_registry = NULL;
     const agnc_mcp_tool_catalog_t *mcp_catalog = NULL;
     int owns_ephemeral_mcp = 0;
+    const char *session_sqlite_path = NULL;
+    int tools_for_prompt;
 
     if (config == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -1226,6 +1283,8 @@ agnc_status_t agnc_query_run(
         if (options->usage_total_tokens != NULL) {
             *options->usage_total_tokens = -1;
         }
+
+        session_sqlite_path = options->session_sqlite_path;
 
         if (options->mcp_session != NULL) {
             (void)agnc_mcp_session_ensure(options->mcp_session, config, AGNC_MCP_TIMEOUT_MS);
@@ -1256,7 +1315,16 @@ agnc_status_t agnc_query_run(
         }
     }
 
-    system_prompt = agnc_query_build_system_prompt(config, config->enable_tools, search_only);
+    {
+        const agnc_gateway_descriptor_t *gateway = agnc_registry_find_gateway(config->gateway_id);
+
+        tools_for_prompt = config->enable_tools;
+        if (gateway != NULL && gateway->transport_kind == AGNC_TRANSPORT_OPENCODE_NATIVE) {
+            tools_for_prompt = 0;
+        }
+    }
+
+    system_prompt = agnc_query_build_system_prompt(config, tools_for_prompt, search_only);
     status = agnc_conversation_ensure_system(conversation, system_prompt);
     free(system_prompt);
     system_prompt = NULL;
@@ -1289,7 +1357,13 @@ agnc_status_t agnc_query_run(
         }
 
         status = agnc_run_provider_turn(
-            config, conversation, &parser, &error_message, cancel_flag, mcp_catalog);
+            config,
+            conversation,
+            &parser,
+            &error_message,
+            cancel_flag,
+            mcp_catalog,
+            session_sqlite_path);
 
         if (chat_assistant_timestamp) {
             agnc_console_spinner_stop();

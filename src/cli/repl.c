@@ -10,6 +10,7 @@
 #include "agnc/conversation.h"
 #include "agnc/line_edit.h"
 #include "agnc/mcp/session.h"
+#include "agnc/opencode.h"
 #include "agnc/path.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
@@ -111,7 +112,9 @@ static void agnc_repl_print_help(void)
     printf("  /help              Tampilkan bantuan ini\n");
     printf("  /clear             Hapus riwayat percakapan\n");
     printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
-    printf("  /model [nama]      Daftar model (gateway dinamis) atau ganti model aktif\n");
+    printf("  /models [provider] [filter]  Discovery model semua provider (filter substring)\n");
+    printf("  /models --filter PATTERN     Filter nama model (case-insensitive)\n");
+    printf("  /model [nama]      Model aktif; tanpa arg = ringkasan, dengan arg = ganti model\n");
     printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
     printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
     printf("  /session           Daftar sesi tersimpan\n");
@@ -619,6 +622,7 @@ static int agnc_repl_handle_slash(
         agnc_conversation_clear(conversation);
         if (*session_path != NULL) {
             (void)agnc_session_clear_messages(*session_path, config);
+            agnc_opencode_clear_session_link(*session_path);
         }
         if (session_usage != NULL) {
             agnc_session_usage_init(session_usage);
@@ -673,6 +677,41 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/models", 7) == 0) {
+        char *provider_filter = NULL;
+        char *name_filter = NULL;
+        agnc_status_t parse_status;
+        int show_result;
+
+        arg = line + 7;
+        agnc_console_print_chat_system("models");
+        parse_status = agnc_cli_models_parse_query(arg, &provider_filter, &name_filter);
+        if (parse_status != AGNC_STATUS_OK) {
+            agnc_console_print_chat_system("format: /models [provider] [filter] atau --filter PATTERN");
+            free(provider_filter);
+            free(name_filter);
+            return 1;
+        }
+
+        g_repl_cancel_flag = 0;
+        g_repl_in_request = 1;
+        show_result = agnc_cli_show_models(
+            provider_filter,
+            name_filter,
+            config->provider_id,
+            config->model,
+            &g_repl_cancel_flag);
+        g_repl_in_request = 0;
+        g_repl_cancel_flag = 0;
+
+        free(provider_filter);
+        free(name_filter);
+        if (show_result == 2) {
+            agnc_console_print_chat_system("discovery dibatalkan");
+        }
+        return 1;
+    }
+
     if (strncmp(line, "/model", 6) == 0) {
         arg = line + 6;
         while (*arg == ' ') {
@@ -681,32 +720,28 @@ static int agnc_repl_handle_slash(
         if (*arg == '\0') {
             const agnc_gateway_descriptor_t *gateway =
                 agnc_registry_find_gateway(config->gateway_id);
-            char **model_ids = NULL;
-            size_t model_count = 0;
-            size_t index;
 
-            if (gateway != NULL && gateway->model_count == 0 &&
-                agnc_provider_list_models(config, &model_ids, &model_count) == AGNC_STATUS_OK &&
-                model_count > 0) {
-                printf("Model (%zu) — gateway %s:\n", model_count, config->gateway_id != NULL ? config->gateway_id : "?");
-                for (index = 0; index < model_count && index < 32; index++) {
-                    const char *marker = config->model != NULL && model_ids[index] != NULL &&
-                                                 strcmp(model_ids[index], config->model) == 0
+            printf(
+                "  provider: %s\n  gateway:  %s\n  model:    %s\n",
+                config->provider_id != NULL ? config->provider_id : "?",
+                config->gateway_id != NULL ? config->gateway_id : "?",
+                config->model != NULL ? config->model : "?");
+
+            if (gateway != NULL && gateway->model_count > 0 && gateway->model_count <= 16) {
+                size_t index;
+
+                printf("  katalog statis (%zu):\n", gateway->model_count);
+                for (index = 0; index < gateway->model_count; index++) {
+                    const agnc_model_descriptor_t *model = &gateway->models[index];
+                    const char *marker =
+                        config->model != NULL && model->id != NULL && strcmp(model->id, config->model) == 0
                         ? " *"
                         : "";
-                    printf("  %s%s\n", model_ids[index] != NULL ? model_ids[index] : "?", marker);
-                }
-                if (model_count > 32) {
-                    printf("  ... (%zu more)\n", model_count - 32);
-                }
-                agnc_provider_free_model_list(model_ids, model_count);
-                return 1;
-            }
 
-            {
-                char detail[256];
-                snprintf(detail, sizeof(detail), "model aktif: %s", config->model != NULL ? config->model : "?");
-                agnc_console_print_chat_system(detail);
+                    printf("    %s%s\n", model->id != NULL ? model->id : "?", marker);
+                }
+            } else {
+                printf("  Daftar lengkap: /models [provider] [filter]\n");
             }
             return 1;
         }
@@ -1018,6 +1053,7 @@ int agnc_cli_run_interactive(void)
     options.usage_completion_tokens = &usage_completion;
     options.usage_total_tokens = &usage_total;
     options.session_name = active_session_name;
+    options.session_sqlite_path = session_path;
 
     for (;;) {
         if (!agnc_repl_read_line(line, sizeof(line))) {

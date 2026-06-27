@@ -75,6 +75,20 @@ void agnc_config_free(agnc_config_t *config);
 /* Muat config dari path; jika path NULL, gunakan ~/.agnc.json. */
 agnc_status_t agnc_config_load(const char *path, agnc_config_t *config);
 
+/*
+ * Daftar kunci providers{} dari config (mis. openrouter, ollama, opencode).
+ * ids_out dan setiap string dialokasikan; pemanggil memanggil agnc_config_free_provider_id_list().
+ */
+agnc_status_t agnc_config_list_provider_ids(const char *path, char ***ids_out, size_t *count_out);
+void agnc_config_free_provider_id_list(char **ids, size_t count);
+
+/*
+ * Resolusi base_url/model/api_key/gateway untuk satu entri providers{id}.
+ * Mengabaikan AGNC_PROVIDER/AGNC_BASE_URL/AGNC_MODEL agar discovery per-provider konsisten.
+ * Hanya field provider yang diisi ulang di config; field lain tidak disentuh.
+ */
+agnc_status_t agnc_config_load_provider_entry(const char *path, const char *provider_id, agnc_config_t *config);
+
 /* Tulis teks JSON ke path dengan rename atomik; validasi JSON dulu. */
 agnc_status_t agnc_config_save_json(const char *path, const char *json_text);
 

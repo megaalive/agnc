@@ -40,6 +40,18 @@ void agnc_sse_parser_set_live_print(agnc_sse_parser_t *parser, int enabled)
     }
 }
 
+void agnc_sse_parser_set_assistant_content(agnc_sse_parser_t *parser, const char *content)
+{
+    if (parser == NULL) {
+        return;
+    }
+
+    free(parser->last_content_chunk);
+    parser->last_content_chunk = agnc_strdup_local(content != NULL ? content : "");
+    parser->printed_any =
+        (parser->last_content_chunk != NULL && parser->last_content_chunk[0] != '\0') ? 1 : 0;
+}
+
 void agnc_sse_parser_free(agnc_sse_parser_t *parser)
 {
     size_t index;

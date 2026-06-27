@@ -24,6 +24,7 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `agnc` — prompt muncul, slash `/help` menampilkan bantuan
 - [ ] Kirim pesan singkat — streaming/spinner, jawaban model tampil
 - [ ] Ctrl+C saat request — request dibatalkan, REPL tetap hidup
+- [ ] Ctrl+C saat `/models` — discovery dibatalkan
 - [ ] `/clear` — riwayat dihapus
 - [ ] `/doctor` — status environment tampil
 - [ ] Setelah turn sukses — baris `token: total N` muncul jika provider mengirim usage
@@ -80,11 +81,19 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `pre_tool` dengan `exit /b 1` — tool diblokir, pesan `blocked by pre_tool hook`
 - [ ] `/hooks` dan `agnc doctor` — daftar / jumlah perintah hook
 
+## OpenCode + model discovery (Fase 6.16)
+
+- [ ] `opencode serve` berjalan di `:4096`; `provider.active` = `opencode` di config
+- [ ] `agnc doctor` — baris opencode OK (probe `/global/health` atau setara)
+- [ ] REPL `/model` — ringkasan model aktif (bukan ratusan baris)
+- [ ] `agnc models opencode nemotron` — filter substring; REPL `/models openrouter claude`
+- [ ] Chat via OpenCode — jawaban model; session OpenCode ter-link (turn kedua tanpa error session)
+
 ## Ollama lokal (Fase 6.15)
 
 - [ ] `agnc doctor` — baris `ollama` ok jika `ollama serve` berjalan dan ada model
 - [ ] Config `providers.ollama` + `provider.active: ollama` — chat tanpa `AGNC_API_KEY`
-- [ ] REPL `/model` — daftar model Ollama; `/model <nama>` ganti model
+- [ ] REPL `/model <nama>` ganti model; discovery lengkap via `/models ollama`
 
 ## Catatan
 
