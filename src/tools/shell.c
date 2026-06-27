@@ -295,16 +295,26 @@ int agnc_tool_shell_is_search_command(const char *command)
     if (strstr(lower, "findstr") != NULL) {
         return 1;
     }
+    if (strncmp(lower, "find ", 5) == 0) {
+        return 1;
+    }
+    if (strncmp(lower, "where", 5) == 0) {
+        return 1;
+    }
     if (strstr(lower, "select-string") != NULL) {
         return 1;
     }
-    if (strstr(lower, " grep") != NULL || strncmp(lower, "grep ", 5) == 0) {
+    if (strncmp(lower, "grep ", 5) == 0 || strstr(lower, " grep") != NULL) {
         return 1;
     }
-    if (strstr(lower, " rg ") != NULL || strncmp(lower, "rg ", 3) == 0) {
+    if (strncmp(lower, "rg ", 3) == 0 || strncmp(lower, "rg.", 3) == 0 || strstr(lower, " rg") != NULL ||
+        strstr(lower, "|rg") != NULL || strstr(lower, "| rg") != NULL) {
         return 1;
     }
     if (strstr(lower, "dir /s") != NULL || strstr(lower, "dir /b /s") != NULL) {
+        return 1;
+    }
+    if (strncmp(lower, "dir ", 4) == 0 && (strstr(lower, "src") != NULL || strstr(lower, "*") != NULL)) {
         return 1;
     }
     if (strstr(lower, "get-childitem") != NULL && strstr(lower, "-recurse") != NULL) {
@@ -313,11 +323,18 @@ int agnc_tool_shell_is_search_command(const char *command)
     if (strstr(lower, "gci ") != NULL && strstr(lower, "-r") != NULL) {
         return 1;
     }
-    if (strstr(lower, " where ") != NULL && strstr(lower, "/r ") != NULL) {
-        return 1;
-    }
 
     return 0;
+}
+
+agnc_status_t agnc_tool_shell_extract_command(const char *arguments_json, char **command_out)
+{
+    if (command_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *command_out = NULL;
+    return agnc_shell_parse_command(arguments_json, command_out);
 }
 
 agnc_status_t agnc_tool_shell_execute(const char *arguments_json, char **result_text)

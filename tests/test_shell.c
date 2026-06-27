@@ -43,7 +43,9 @@ static void test_shell_blocks_findstr(void **state)
     (void)state;
 
     assert_true(agnc_tool_shell_is_search_command("findstr /s /i agnc_query src\\*") != 0);
-    assert_true(agnc_tool_shell_is_search_command("Get-ChildItem -Recurse src") != 0);
+    assert_true(agnc_tool_shell_is_search_command("where rg") != 0);
+    assert_true(agnc_tool_shell_is_search_command("rg agnc_query src") != 0);
+    assert_true(agnc_tool_shell_is_search_command("dir src") != 0);
     assert_true(agnc_tool_shell_is_search_command("dir") == 0);
 
     status = agnc_tool_shell_execute("{\"command\":\"findstr /s /i agnc_query src\\\\*\"}", &result);

@@ -31,6 +31,7 @@ add_executable(agnc
     src/tools/write_file.c
     src/tools/edit_file.c
     src/tools/grep.c
+    src/tools/rg_locate.c
     src/tools/glob.c
     src/util/atomic_write.c
     src/util/path.c
@@ -125,6 +126,7 @@ if(AGNC_BUILD_TESTS)
         src/tools/write_file.c
         src/tools/edit_file.c
         src/tools/grep.c
+        src/tools/rg_locate.c
         src/util/atomic_write.c
     )
 

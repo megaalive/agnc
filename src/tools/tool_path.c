@@ -355,3 +355,45 @@ agnc_status_t agnc_tool_path_validate_workspace(const char *absolute_path)
 
     return allowed ? AGNC_STATUS_OK : AGNC_STATUS_TOOL_DENIED;
 }
+
+agnc_status_t agnc_tool_path_workspace_root(char **root)
+{
+    char *workspace;
+
+    if (root == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    workspace = agnc_tool_path_get_workspace();
+    if (workspace == NULL) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    return agnc_tool_path_to_absolute(workspace, root);
+}
+
+agnc_status_t agnc_tool_path_resolve_search(const char *path, char **resolved)
+{
+    char *src_path = NULL;
+    agnc_status_t status;
+
+    if (resolved == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *resolved = NULL;
+
+    if (path != NULL && path[0] != '\0' && strcmp(path, ".") != 0) {
+        return agnc_tool_path_resolve(path, resolved);
+    }
+
+    /* Model sering lupa path; default ke src/ jika ada di repo. */
+    status = agnc_tool_path_resolve("src", &src_path);
+    if (status == AGNC_STATUS_OK && src_path != NULL && agnc_tool_path_exists(src_path)) {
+        *resolved = src_path;
+        return AGNC_STATUS_OK;
+    }
+
+    free(src_path);
+    return agnc_tool_path_workspace_root(resolved);
+}

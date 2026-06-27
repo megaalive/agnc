@@ -219,7 +219,11 @@ static void agnc_append_grep_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr
     yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
     yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
     agnc_schema_add_string_prop(doc, properties_obj, "pattern", "Regex or literal search pattern.");
-    agnc_schema_add_string_prop(doc, properties_obj, "path", "File or directory to search (default .).");
+    agnc_schema_add_string_prop(
+        doc,
+        properties_obj,
+        "path",
+        "Directory or file to search. Omit or use src for source folder (default: src if exists, else repo root).");
     yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "pattern"));
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
@@ -370,15 +374,21 @@ static agnc_status_t agnc_execute_tool(
     }
 
     if (strcmp(tool_name, "shell") == 0) {
-        const char *preview = agnc_tool_shell_command_preview(tool_arguments);
+        char *shell_command = NULL;
+        const char *preview;
+
+        status = agnc_tool_shell_extract_command(tool_arguments, &shell_command);
+        preview = shell_command != NULL ? shell_command : agnc_tool_shell_command_preview(tool_arguments);
 
         fprintf(stderr, "agnc: [tool] shell: %s\n", preview != NULL ? preview : "(empty)");
 
-        if (agnc_tool_shell_is_search_command(preview)) {
+        if (shell_command != NULL && agnc_tool_shell_is_search_command(shell_command)) {
+            free(shell_command);
             *tool_result = agnc_strdup_local(
                 "error: shell search blocked; use the grep tool for text search or glob for file patterns.");
             return AGNC_STATUS_TOOL_FAILED;
         }
+        free(shell_command);
 
         if (config->ask_shell_permission) {
             status = agnc_permission_ask_shell(agnc_tool_shell_command_preview(tool_arguments), &allowed);
@@ -502,8 +512,55 @@ static agnc_status_t agnc_run_provider_turn(
     return status;
 }
 
+static int agnc_query_prompt_is_search(const char *prompt)
+{
+    char lower[512];
+    size_t index;
+    size_t length;
+
+    if (prompt == NULL || prompt[0] == '\0') {
+        return 0;
+    }
+
+    length = strlen(prompt);
+    if (length >= sizeof(lower)) {
+        length = sizeof(lower) - 1;
+    }
+
+    for (index = 0; index < length; index++) {
+        char ch = prompt[index];
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = (char)(ch - 'A' + 'a');
+        }
+        lower[index] = ch;
+    }
+    lower[length] = '\0';
+
+    if (strstr(lower, "grep") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "pattern") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "findstr") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "ripgrep") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "cari ") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "search ") != NULL || strstr(lower, " search") != NULL) {
+        return 1;
+    }
+
+    return 0;
+}
+
 agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
 {
+    agnc_config_t run_config;
     agnc_message_list_t messages;
     agnc_sse_parser_t parser;
     agnc_status_t status;
@@ -517,6 +574,13 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
+    run_config = *config;
+    if (agnc_query_prompt_is_search(prompt)) {
+        /* Query pencarian: jangan expose shell agar model tidak loop findstr/rg/where. */
+        run_config.tool_shell = 0;
+    }
+    config = &run_config;
+
     memset(&parser, 0, sizeof(parser));
 
     if (curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK) {
@@ -526,13 +590,21 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
     agnc_message_list_init(&messages);
 
     if (config->enable_tools) {
-        system_prompt =
-            "You are a helpful coding assistant on Windows. "
-            "For code/text search always use the grep tool (ripgrep), never shell findstr/find/grep. "
-            "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
-            "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
-            "Paths like src/ and README.md resolve from repo root even when cwd is a build subfolder. "
-            "Match the user's language. Be concise; do not add filler intros before answers.";
+        if (agnc_query_prompt_is_search(prompt)) {
+            system_prompt =
+                "You are a helpful coding assistant on Windows. "
+                "This is a search-only query: use the grep tool (path=src if user mentions src). "
+                "Shell is disabled. Never suggest findstr, where, or rg via shell. "
+                "Match the user's language. Be concise.";
+        } else {
+            system_prompt =
+                "You are a helpful coding assistant on Windows. "
+                "For code/text search use the grep tool (ripgrep), never shell findstr/find/rg/where. "
+                "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
+                "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
+                "Paths like src/ resolve from repo root even when cwd is a build subfolder. "
+                "Match the user's language. Be concise; do not add filler intros before answers.";
+        }
     } else {
         system_prompt =
             "You are a helpful coding assistant. You cannot access the filesystem or run shell commands in this session. "

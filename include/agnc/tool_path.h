@@ -23,4 +23,10 @@ agnc_status_t agnc_tool_path_resolve(const char *path, char **resolved);
  */
 agnc_status_t agnc_tool_path_validate_workspace(const char *absolute_path);
 
+/* Return repo/workspace root (heap-owned). */
+agnc_status_t agnc_tool_path_workspace_root(char **root);
+
+/* Resolve path pencarian grep/glob; default "." -> src jika ada, else repo root. */
+agnc_status_t agnc_tool_path_resolve_search(const char *path, char **resolved);
+
 #endif

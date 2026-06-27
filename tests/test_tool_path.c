@@ -4,6 +4,7 @@
  * Unit test resolusi path dan validasi workspace tool.
  */
 
+#include "agnc/rg_locate.h"
 #include "agnc/tool.h"
 #include "agnc/tool_path.h"
 
@@ -103,11 +104,15 @@ static void test_write_and_edit_roundtrip(void **state)
 
 static void test_grep_finds_in_src(void **state)
 {
-    const char *json = "{\"pattern\":\"agnc_query_print\",\"path\":\"src\"}";
+    const char *json = "{\"pattern\":\"agnc_query\"}";
     char *result = NULL;
+    agnc_status_t status;
     (void)state;
 
-    assert_int_equal(agnc_tool_grep_execute(json, &result), AGNC_STATUS_OK);
+    assert_non_null(agnc_rg_locate_binary());
+
+    status = agnc_tool_grep_execute(json, &result);
+    assert_int_equal(status, AGNC_STATUS_OK);
     assert_non_null(result);
     assert_true(strstr(result, "agnc_query") != NULL);
     free(result);

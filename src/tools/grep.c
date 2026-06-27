@@ -4,6 +4,7 @@
  * Tool grep via ripgrep (rg) — spawn proses eksternal, batasi output.
  */
 
+#include "agnc/rg_locate.h"
 #include "agnc/tool_path.h"
 
 #include <stdio.h>
@@ -77,6 +78,7 @@ static agnc_status_t agnc_grep_parse(const char *arguments_json, char **pattern_
 
 static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_path, char **result_text)
 {
+    const char *rg_binary;
     char *command;
     size_t command_len;
     FILE *pipe;
@@ -87,17 +89,25 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
     int truncated = 0;
     int exit_hint = 0;
 
-    command_len = strlen(pattern) + strlen(search_path) + 160;
+    rg_binary = agnc_rg_locate_binary();
+    if (rg_binary == NULL) {
+        *result_text = agnc_strdup_local(
+            "error: ripgrep (rg) not found. Install ripgrep or set AGNC_RG_PATH. Do not use shell.");
+        return AGNC_STATUS_TOOL_FAILED;
+    }
+
+    command_len = strlen(rg_binary) + strlen(pattern) + strlen(search_path) + 192;
     command = (char *)malloc(command_len);
     if (command == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    /* Selalu quote pattern dan path agar aman di Windows (spasi, wildcard). */
+    /* _popen di Windows lewat cmd.exe; hindari quote ganda yang merusak path. */
     snprintf(
         command,
         command_len,
-        "rg --no-heading --line-number --max-count 200 \"%s\" \"%s\" 2>&1",
+        "%s --no-heading --line-number --max-count 200 %s %s 2>&1",
+        rg_binary,
         pattern,
         search_path);
 
@@ -221,7 +231,7 @@ agnc_status_t agnc_tool_grep_execute(const char *arguments_json, char **result_t
         return AGNC_STATUS_TOOL_FAILED;
     }
 
-    status = agnc_tool_path_resolve(path, &resolved);
+    status = agnc_tool_path_resolve_search(path, &resolved);
     if (status != AGNC_STATUS_OK) {
         free(pattern);
         free(path);
