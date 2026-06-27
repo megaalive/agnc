@@ -54,6 +54,9 @@ static void test_config_load_mcp_servers(void **state)
     assert_int_equal(config.mcp_servers[0].arg_count, 3);
     assert_string_equal(config.mcp_servers[0].args[0], "-y");
     assert_string_equal(config.mcp_servers[0].args[1], "@modelcontextprotocol/server-filesystem");
+    assert_int_equal(config.mcp_servers[0].env_count, 1);
+    assert_string_equal(config.mcp_servers[0].env_keys[0], "AGNC_MCP_TEST_ENV");
+    assert_string_equal(config.mcp_servers[0].env_values[0], "fixture-value");
     assert_false(config.mcp_servers[1].enabled);
     assert_string_equal(config.mcp_servers[1].id, "second-server");
 

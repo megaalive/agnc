@@ -18,6 +18,9 @@ typedef struct {
     char **args;
     size_t arg_count;
     char *cwd;
+    char **env_keys;
+    char **env_values;
+    size_t env_count;
     int enabled;
 } agnc_mcp_server_config_t;
 
@@ -43,6 +46,10 @@ typedef struct {
     int ask_write_permission;
     int ask_mcp_permission;
     int ask_web_fetch_permission;
+    int deny_shell_permission;
+    int deny_write_permission;
+    int deny_mcp_permission;
+    int deny_web_fetch_permission;
     agnc_mcp_server_config_t *mcp_servers;
     size_t mcp_server_count;
 } agnc_config_t;

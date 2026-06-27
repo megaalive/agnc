@@ -115,6 +115,9 @@ agnc_status_t agnc_mcp_registry_load_from_config(
             (const char *const *)server_config->args,
             server_config->arg_count,
             server_config->cwd,
+            (const char *const *)server_config->env_keys,
+            (const char *const *)server_config->env_values,
+            server_config->env_count,
             &entry->client,
             &tools_json,
             timeout_ms);

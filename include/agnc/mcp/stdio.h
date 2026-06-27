@@ -24,6 +24,9 @@ agnc_status_t agnc_mcp_stdio_spawn(
     const char *const *argv_extra,
     size_t argc,
     const char *cwd,
+    const char *const *env_keys,
+    const char *const *env_values,
+    size_t env_count,
     agnc_mcp_stdio_conn_t **conn_out);
 
 void agnc_mcp_stdio_close(agnc_mcp_stdio_conn_t *conn);

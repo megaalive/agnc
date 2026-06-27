@@ -22,7 +22,9 @@
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/workspace"],
         "cwd": null,
-        "env": {}
+        "env": {
+          "AGNC_MCP_TEST_ENV": "fixture-value"
+        }
       },
       {
         "id": "second-server",

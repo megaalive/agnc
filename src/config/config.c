@@ -509,6 +509,30 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
             config->ask_web_fetch_permission =
                 agnc_config_json_array_contains(always_ask, "web_fetch") && !allow_web_fetch;
         }
+
+        {
+            yyjson_val *always_deny = yyjson_obj_get(permissions, "always_deny");
+
+            if (always_deny != NULL && yyjson_is_arr(always_deny)) {
+                if (agnc_config_json_array_contains(always_deny, "shell")) {
+                    config->deny_shell_permission = 1;
+                    config->ask_shell_permission = 0;
+                }
+                if (agnc_config_json_array_contains(always_deny, "write_file") ||
+                    agnc_config_json_array_contains(always_deny, "edit_file")) {
+                    config->deny_write_permission = 1;
+                    config->ask_write_permission = 0;
+                }
+                if (agnc_config_json_array_contains(always_deny, "mcp")) {
+                    config->deny_mcp_permission = 1;
+                    config->ask_mcp_permission = 0;
+                }
+                if (agnc_config_json_array_contains(always_deny, "web_fetch")) {
+                    config->deny_web_fetch_permission = 1;
+                    config->ask_web_fetch_permission = 0;
+                }
+            }
+        }
     }
 }
 
@@ -533,6 +557,15 @@ static void agnc_config_free_mcp_servers(agnc_config_t *config)
                 free(server->args[arg_index]);
             }
             free(server->args);
+        }
+
+        if (server->env_keys != NULL) {
+            for (arg_index = 0; arg_index < server->env_count; arg_index++) {
+                free(server->env_keys[arg_index]);
+                free(server->env_values[arg_index]);
+            }
+            free(server->env_keys);
+            free(server->env_values);
         }
     }
 
@@ -650,6 +683,57 @@ static agnc_status_t agnc_config_parse_mcp_servers(yyjson_val *root, agnc_config
                         agnc_config_free_mcp_servers(config);
                         return AGNC_STATUS_OUT_OF_MEMORY;
                     }
+                }
+            }
+        }
+
+        {
+            yyjson_val *env_object = yyjson_obj_get(entry, "env");
+            yyjson_obj_iter env_iter;
+
+            if (env_object != NULL) {
+                size_t env_index = 0;
+
+                if (!yyjson_is_obj(env_object)) {
+                    agnc_config_free_mcp_servers(config);
+                    return AGNC_STATUS_JSON_ERROR;
+                }
+
+                server->env_count = yyjson_obj_size(env_object);
+                if (server->env_count > 0) {
+                    server->env_keys = (char **)calloc(server->env_count, sizeof(*server->env_keys));
+                    server->env_values = (char **)calloc(server->env_count, sizeof(*server->env_values));
+                    if (server->env_keys == NULL || server->env_values == NULL) {
+                        free(server->env_keys);
+                        free(server->env_values);
+                        server->env_keys = NULL;
+                        server->env_values = NULL;
+                        agnc_config_free_mcp_servers(config);
+                        return AGNC_STATUS_OUT_OF_MEMORY;
+                    }
+
+                    yyjson_obj_iter_init(env_object, &env_iter);
+                    while ((value = yyjson_obj_iter_next(&env_iter)) != NULL) {
+                        const char *env_key = yyjson_get_str(value);
+
+                        value = yyjson_obj_iter_get_val(value);
+
+                        if (env_key == NULL || env_key[0] == '\0' || value == NULL || !yyjson_is_str(value)) {
+                            agnc_config_free_mcp_servers(config);
+                            return AGNC_STATUS_JSON_ERROR;
+                        }
+
+                        server->env_keys[env_index] = agnc_strdup_local(env_key);
+                        server->env_values[env_index] = agnc_strdup_local(yyjson_get_str(value));
+                        if (server->env_keys[env_index] == NULL || server->env_values[env_index] == NULL) {
+                            agnc_config_free_mcp_servers(config);
+                            return AGNC_STATUS_OUT_OF_MEMORY;
+                        }
+
+                        env_index++;
+                    }
+
+                    server->env_count = env_index;
                 }
             }
         }

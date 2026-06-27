@@ -55,11 +55,31 @@ static void test_shell_blocks_findstr(void **state)
     free(result);
 }
 
+static void test_shell_blocks_dangerous_commands(void **state)
+{
+    char *result = NULL;
+    agnc_status_t status;
+    (void)state;
+
+    assert_true(agnc_tool_shell_is_dangerous_command("rm -rf /") != 0);
+    assert_true(agnc_tool_shell_is_dangerous_command("format c:") != 0);
+    assert_true(agnc_tool_shell_is_dangerous_command("diskpart") != 0);
+    assert_true(agnc_tool_shell_is_dangerous_command("shutdown /s /t 0") != 0);
+    assert_true(agnc_tool_shell_is_dangerous_command("echo hello") == 0);
+
+    status = agnc_tool_shell_execute("{\"command\":\"rm -rf /\"}", &result);
+    assert_int_equal(status, AGNC_STATUS_TOOL_DENIED);
+    assert_non_null(result);
+    assert_non_null(strstr(result, "dangerous shell command blocked"));
+    free(result);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_shell_truncates_large_output),
         cmocka_unit_test(test_shell_blocks_findstr),
+        cmocka_unit_test(test_shell_blocks_dangerous_commands),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

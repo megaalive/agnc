@@ -118,7 +118,9 @@ Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada pr
 
 Path file divalidasi agar tidak keluar **workspace** (cwd, repo root, atau `AGNC_WORKSPACE`).
 
-Aturan permission di `~/.agnc.json`: `always_ask`, `always_allow`, `always_deny` (subset: `shell`, `write_file`, `edit_file`, `mcp`, `web_fetch`).
+Aturan permission di `~/.agnc.json`: `always_ask`, `always_allow`, `always_deny` (subset: `shell`, `write_file`, `edit_file`, `mcp`, `web_fetch`). `always_deny` menang atas allow/ask.
+
+Perintah shell destructive (mis. `rm -rf`, `format`) ditolak otomatis oleh safety classifier.
 
 ### MCP (stdio)
 
@@ -143,7 +145,7 @@ Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corru
 - Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
 - API key tidak pernah dicetak ke log atau stdout.
 
-Lihat `roadmap.md` untuk rencana implementasi.
+Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk checklist uji manual.
 
 ## Status fase
 
@@ -157,4 +159,5 @@ Lihat `roadmap.md` untuk rencana implementasi.
 - **Fase 6.2** — line editing REPL, `web_fetch`: selesai
 - **Fase 6.3** — `todo_write`: selesai
 - **Fase 6.4** — modul konsol REPL Windows (input mentah, paste, permission terintegrasi): selesai
-- **Fase 6.5+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking: backlog (lihat `roadmap.md`)
+- **Fase 6.5** — env MCP spawn, `always_deny`, shell safety, CI, smoke test: selesai
+- **Fase 6.6+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking: backlog (lihat `roadmap.md`)

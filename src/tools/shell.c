@@ -327,6 +327,55 @@ int agnc_tool_shell_is_search_command(const char *command)
     return 0;
 }
 
+int agnc_tool_shell_is_dangerous_command(const char *command)
+{
+    char lower[1024];
+
+    if (command == NULL || command[0] == '\0') {
+        return 0;
+    }
+
+    agnc_shell_copy_lower(command, lower, sizeof(lower));
+
+    if (strstr(lower, "rm -rf") != NULL || strstr(lower, "rm -r /") != NULL) {
+        return 1;
+    }
+    if (strncmp(lower, "format ", 7) == 0 || strstr(lower, "format c:") != NULL ||
+        strstr(lower, "format d:") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "diskpart") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "del /f /s /q c:") != NULL || strstr(lower, "del /s /q c:") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "rmdir /s /q c:") != NULL || strstr(lower, "rd /s /q c:") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "remove-item") != NULL && strstr(lower, "-recurse") != NULL &&
+        (strstr(lower, "c:\\") != NULL || strstr(lower, "c:/") != NULL)) {
+        return 1;
+    }
+    if (strstr(lower, "shutdown /s") != NULL || strstr(lower, "shutdown -s") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "stop-computer") != NULL || strstr(lower, "restart-computer") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "clear-disk") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, ":(){ :|:& };:") != NULL) {
+        return 1;
+    }
+    if (strstr(lower, "dd if=") != NULL && strstr(lower, "of=") != NULL) {
+        return 1;
+    }
+
+    return 0;
+}
+
 agnc_status_t agnc_tool_shell_extract_command(const char *arguments_json, char **command_out)
 {
     if (command_out == NULL) {
@@ -359,6 +408,13 @@ agnc_status_t agnc_tool_shell_execute(const char *arguments_json, char **result_
             "error: shell search blocked; use the grep tool for text search or glob for file patterns. "
             "Do not retry with findstr, find, or recursive dir.");
         return AGNC_STATUS_TOOL_FAILED;
+    }
+
+    if (agnc_tool_shell_is_dangerous_command(command)) {
+        free(command);
+        *result_text = agnc_strdup_local(
+            "error: dangerous shell command blocked by safety policy");
+        return AGNC_STATUS_TOOL_DENIED;
     }
 
     status = agnc_shell_run_powershell(command, result_text);

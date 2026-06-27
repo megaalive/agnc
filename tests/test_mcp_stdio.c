@@ -31,7 +31,7 @@ static void test_mcp_stdio_write_read_line(void **state)
 
     (void)state;
 
-    status = agnc_mcp_stdio_spawn(MCP_MOCK_SERVER, NULL, 0, NULL, &conn);
+    status = agnc_mcp_stdio_spawn(MCP_MOCK_SERVER, NULL, 0, NULL, NULL, NULL, 0, &conn);
     assert_int_equal(status, AGNC_STATUS_OK);
     assert_non_null(conn);
 
@@ -63,7 +63,8 @@ static void test_mcp_client_handshake(void **state)
     (void)state;
 
     agnc_mcp_client_init(&client);
-    status = agnc_mcp_client_connect(MCP_MOCK_SERVER, NULL, 0, NULL, &client, &tools_json, 10000);
+    status = agnc_mcp_client_connect(
+        MCP_MOCK_SERVER, NULL, 0, NULL, NULL, NULL, 0, &client, &tools_json, 10000);
     assert_int_equal(status, AGNC_STATUS_OK);
     assert_true(client.initialized);
     assert_non_null(tools_json);
@@ -82,7 +83,8 @@ static void test_mcp_client_call_tool(void **state)
     (void)state;
 
     agnc_mcp_client_init(&client);
-    status = agnc_mcp_client_connect(MCP_MOCK_SERVER, NULL, 0, NULL, &client, NULL, 10000);
+    status = agnc_mcp_client_connect(
+        MCP_MOCK_SERVER, NULL, 0, NULL, NULL, NULL, 0, &client, NULL, 10000);
     assert_int_equal(status, AGNC_STATUS_OK);
 
     status = agnc_mcp_client_call_tool(&client, "mock_tool", "{}", &result, 10000);
@@ -92,6 +94,43 @@ static void test_mcp_client_call_tool(void **state)
 
     free(result);
     agnc_mcp_client_close(&client);
+}
+
+static void test_mcp_stdio_spawn_custom_env(void **state)
+{
+    agnc_mcp_stdio_conn_t *conn = NULL;
+    agnc_jsonrpc_message_t response;
+    const char *env_keys[] = {"AGNC_MCP_TEST_ENV"};
+    const char *env_values[] = {"from-config"};
+    char *request;
+    agnc_status_t status;
+
+    (void)state;
+
+    status = agnc_mcp_stdio_spawn(
+        MCP_MOCK_SERVER, NULL, 0, NULL, env_keys, env_values, 1, &conn);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_non_null(conn);
+
+    request = agnc_jsonrpc_format_request(
+        1,
+        "initialize",
+        "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+        "\"clientInfo\":{\"name\":\"agnc\",\"version\":\"0.1.0\"}}");
+    assert_non_null(request);
+
+    assert_int_equal(agnc_mcp_stdio_write_line(conn, request), AGNC_STATUS_OK);
+    free(request);
+
+    agnc_jsonrpc_message_init(&response);
+    status = agnc_mcp_stdio_read_message(conn, &response, 10000);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_false(response.has_error);
+    assert_non_null(response.result_json);
+    assert_non_null(strstr(response.result_json, "env:from-config"));
+
+    agnc_jsonrpc_message_free(&response);
+    agnc_mcp_stdio_close(conn);
 }
 #else
 static void test_mcp_stdio_skipped_on_non_windows(void **state)
@@ -108,6 +147,7 @@ int main(void)
         cmocka_unit_test(test_mcp_stdio_write_read_line),
         cmocka_unit_test(test_mcp_client_handshake),
         cmocka_unit_test(test_mcp_client_call_tool),
+        cmocka_unit_test(test_mcp_stdio_spawn_custom_env),
     };
 #else
     const struct CMUnitTest tests[] = {

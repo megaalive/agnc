@@ -76,6 +76,9 @@ agnc_status_t agnc_mcp_client_connect(
     const char *const *argv_extra,
     size_t argc,
     const char *cwd,
+    const char *const *env_keys,
+    const char *const *env_values,
+    size_t env_count,
     agnc_mcp_client_t *client,
     char **tools_json_out,
     unsigned timeout_ms)
@@ -97,7 +100,15 @@ agnc_status_t agnc_mcp_client_connect(
 
     agnc_mcp_client_init(client);
 
-    status = agnc_mcp_stdio_spawn(command, argv_extra, argc, cwd, &client->transport);
+    status = agnc_mcp_stdio_spawn(
+        command,
+        argv_extra,
+        argc,
+        cwd,
+        env_keys,
+        env_values,
+        env_count,
+        &client->transport);
     if (status != AGNC_STATUS_OK) {
         return status;
     }

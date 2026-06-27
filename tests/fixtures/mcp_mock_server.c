@@ -30,6 +30,21 @@ static long parse_id(const char *line)
 
 static void reply_initialize(long id)
 {
+    const char *test_env = getenv("AGNC_MCP_TEST_ENV");
+
+    if (test_env != NULL && test_env[0] != '\0') {
+        printf(
+            "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{"
+            "\"protocolVersion\":\"2024-11-05\","
+            "\"capabilities\":{\"tools\":{}},"
+            "\"serverInfo\":{\"name\":\"env:%s\",\"version\":\"0\"}"
+            "}}\n",
+            id,
+            test_env);
+        fflush(stdout);
+        return;
+    }
+
     printf(
         "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{"
         "\"protocolVersion\":\"2024-11-05\","

@@ -11,10 +11,11 @@
 #include <string.h>
 
 #ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 #include <windows.h>
+
+/* MSVC kadang tidak mendeklarasikan API env block saat WIN32_LEAN_AND_MEAN aktif di TU lain. */
+WINBASEAPI LPCH WINAPI GetEnvironmentStringsA(void);
+WINBASEAPI BOOL WINAPI FreeEnvironmentStringsA(LPCH lpEnvironmentStrings);
 #endif
 
 #define AGNC_MCP_STDIO_LINE_INITIAL 4096
@@ -216,6 +217,192 @@ static void agnc_mcp_stdio_close_handles(HANDLE *handles, size_t count)
     }
 }
 
+typedef struct {
+    char **entries;
+    size_t count;
+    size_t capacity;
+} agnc_mcp_env_list_t;
+
+static void agnc_mcp_env_list_clear(agnc_mcp_env_list_t *list)
+{
+    size_t index;
+
+    if (list == NULL || list->entries == NULL) {
+        return;
+    }
+
+    for (index = 0; index < list->count; index++) {
+        free(list->entries[index]);
+    }
+
+    free(list->entries);
+    list->entries = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static int agnc_mcp_env_entry_key_equals(const char *entry, const char *key)
+{
+    const char *equals_sign;
+    size_t key_len;
+
+    if (entry == NULL || key == NULL || key[0] == '\0') {
+        return 0;
+    }
+
+    equals_sign = strchr(entry, '=');
+    if (equals_sign == NULL) {
+        return 0;
+    }
+
+    key_len = strlen(key);
+    if ((size_t)(equals_sign - entry) != key_len) {
+        return 0;
+    }
+
+    return _strnicmp(entry, key, key_len) == 0;
+}
+
+static agnc_status_t agnc_mcp_env_list_push(agnc_mcp_env_list_t *list, const char *entry)
+{
+    char *copy;
+    char **next_entries;
+    size_t new_capacity;
+
+    if (list == NULL || entry == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    copy = agnc_mcp_stdio_strdup_local(entry);
+    if (copy == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    if (list->count == list->capacity) {
+        new_capacity = list->capacity == 0 ? 16 : list->capacity * 2;
+        next_entries = (char **)realloc(list->entries, new_capacity * sizeof(*list->entries));
+        if (next_entries == NULL) {
+            free(copy);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+
+        list->entries = next_entries;
+        list->capacity = new_capacity;
+    }
+
+    list->entries[list->count++] = copy;
+    return AGNC_STATUS_OK;
+}
+
+static void agnc_mcp_env_list_remove_key(agnc_mcp_env_list_t *list, const char *key)
+{
+    size_t index;
+
+    if (list == NULL || list->entries == NULL || key == NULL) {
+        return;
+    }
+
+    for (index = 0; index < list->count; index++) {
+        if (agnc_mcp_env_entry_key_equals(list->entries[index], key)) {
+            free(list->entries[index]);
+            if (index + 1 < list->count) {
+                memmove(
+                    &list->entries[index],
+                    &list->entries[index + 1],
+                    (list->count - index - 1) * sizeof(*list->entries));
+            }
+            list->count--;
+            return;
+        }
+    }
+}
+
+static agnc_status_t agnc_mcp_stdio_build_merged_env_block(
+    const char *const *env_keys,
+    const char *const *env_values,
+    size_t env_count,
+    char **block_out)
+{
+    LPCH parent_env;
+    agnc_mcp_env_list_t list;
+    char *block;
+    char pair[8192];
+    size_t total_size;
+    size_t index;
+    size_t offset;
+    agnc_status_t status;
+
+    if (block_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *block_out = NULL;
+    memset(&list, 0, sizeof(list));
+
+    parent_env = GetEnvironmentStringsA();
+    if (parent_env == NULL) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    for (LPCH cursor = parent_env; *cursor != '\0'; cursor += strlen(cursor) + 1) {
+        if (cursor[0] == '=') {
+            continue;
+        }
+
+        status = agnc_mcp_env_list_push(&list, cursor);
+        if (status != AGNC_STATUS_OK) {
+            FreeEnvironmentStringsA(parent_env);
+            agnc_mcp_env_list_clear(&list);
+            return status;
+        }
+    }
+
+    FreeEnvironmentStringsA(parent_env);
+
+    for (index = 0; index < env_count; index++) {
+        if (env_keys[index] == NULL || env_keys[index][0] == '\0') {
+            continue;
+        }
+
+        agnc_mcp_env_list_remove_key(&list, env_keys[index]);
+        snprintf(
+            pair,
+            sizeof(pair),
+            "%s=%s",
+            env_keys[index],
+            env_values != NULL && env_values[index] != NULL ? env_values[index] : "");
+        status = agnc_mcp_env_list_push(&list, pair);
+        if (status != AGNC_STATUS_OK) {
+            agnc_mcp_env_list_clear(&list);
+            return status;
+        }
+    }
+
+    total_size = 1;
+    for (index = 0; index < list.count; index++) {
+        total_size += strlen(list.entries[index]) + 1;
+    }
+
+    block = (char *)malloc(total_size);
+    if (block == NULL) {
+        agnc_mcp_env_list_clear(&list);
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    offset = 0;
+    for (index = 0; index < list.count; index++) {
+        size_t entry_len = strlen(list.entries[index]);
+
+        memcpy(block + offset, list.entries[index], entry_len + 1);
+        offset += entry_len + 1;
+    }
+
+    block[offset] = '\0';
+    agnc_mcp_env_list_clear(&list);
+    *block_out = block;
+    return AGNC_STATUS_OK;
+}
+
 static agnc_status_t agnc_mcp_stdio_read_byte(HANDLE stdout_read, unsigned char *byte_out, unsigned timeout_ms)
 {
     DWORD started;
@@ -255,6 +442,9 @@ agnc_status_t agnc_mcp_stdio_spawn(
     const char *const *argv_extra,
     size_t argc,
     const char *cwd,
+    const char *const *env_keys,
+    const char *const *env_values,
+    size_t env_count,
     agnc_mcp_stdio_conn_t **conn_out)
 {
     agnc_mcp_stdio_conn_t *conn;
@@ -286,6 +476,7 @@ agnc_status_t agnc_mcp_stdio_spawn(
         PROCESS_INFORMATION process_info;
         char *command_line = NULL;
         char *resolved_command = NULL;
+        char *environment_block = NULL;
         char current_directory[MAX_PATH];
         agnc_status_t status;
         BOOL created;
@@ -349,6 +540,17 @@ agnc_status_t agnc_mcp_stdio_spawn(
             snprintf(current_directory, sizeof(current_directory), "%s", cwd);
         }
 
+        if (env_count > 0 && env_keys != NULL) {
+            status = agnc_mcp_stdio_build_merged_env_block(env_keys, env_values, env_count, &environment_block);
+            if (status != AGNC_STATUS_OK) {
+                agnc_mcp_stdio_close_handles(
+                    (HANDLE[]){child_stdin_read, child_stdin_write, child_stdout_read, child_stdout_write},
+                    4);
+                free(conn);
+                return status;
+            }
+        }
+
         created = CreateProcessA(
             NULL,
             command_line,
@@ -356,11 +558,12 @@ agnc_status_t agnc_mcp_stdio_spawn(
             NULL,
             TRUE,
             CREATE_NO_WINDOW,
-            NULL,
+            environment_block,
             cwd != NULL && cwd[0] != '\0' ? current_directory : NULL,
             &startup_info,
             &process_info);
 
+        free(environment_block);
         free(command_line);
         CloseHandle(child_stdin_read);
         CloseHandle(child_stdout_write);
@@ -388,6 +591,9 @@ agnc_status_t agnc_mcp_stdio_spawn(
     (void)argv_extra;
     (void)argc;
     (void)cwd;
+    (void)env_keys;
+    (void)env_values;
+    (void)env_count;
     free(conn);
     return AGNC_STATUS_IO_ERROR;
 #endif

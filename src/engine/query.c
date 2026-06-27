@@ -523,6 +523,11 @@ static agnc_status_t agnc_execute_tool(
         }
         free(shell_command);
 
+        if (config->deny_shell_permission) {
+            *tool_result = agnc_strdup_local("error: shell denied by config (always_deny)");
+            return AGNC_STATUS_TOOL_DENIED;
+        }
+
         if (config->ask_shell_permission && !auto_approve) {
             status = agnc_permission_ask_shell(
                 agnc_tool_shell_command_preview(tool_arguments), &allowed, interactive_repl);
@@ -544,6 +549,11 @@ static agnc_status_t agnc_execute_tool(
         snprintf(tool_line, sizeof(tool_line), "write_file: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
+        if (config->deny_write_permission) {
+            *tool_result = agnc_strdup_local("error: write denied by config (always_deny)");
+            return AGNC_STATUS_TOOL_DENIED;
+        }
+
         if (config->ask_write_permission && !auto_approve) {
             status = agnc_permission_ask_file_write(preview, "write", &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
@@ -563,6 +573,11 @@ static agnc_status_t agnc_execute_tool(
 
         snprintf(tool_line, sizeof(tool_line), "edit_file: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
+
+        if (config->deny_write_permission) {
+            *tool_result = agnc_strdup_local("error: edit denied by config (always_deny)");
+            return AGNC_STATUS_TOOL_DENIED;
+        }
 
         if (config->ask_write_permission && !auto_approve) {
             status = agnc_permission_ask_file_write(preview, "edit", &allowed, interactive_repl);
@@ -616,6 +631,11 @@ static agnc_status_t agnc_execute_tool(
         snprintf(tool_line, sizeof(tool_line), "%s", tool_name);
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
+        if (config->deny_mcp_permission) {
+            *tool_result = agnc_strdup_local("error: mcp tool denied by config (always_deny)");
+            return AGNC_STATUS_TOOL_DENIED;
+        }
+
         if (config->ask_mcp_permission && !auto_approve) {
             status = agnc_permission_ask_mcp(tool_name, &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
@@ -649,6 +669,11 @@ static agnc_status_t agnc_execute_tool(
 
         snprintf(tool_line, sizeof(tool_line), "web_fetch: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
+
+        if (config->deny_web_fetch_permission) {
+            *tool_result = agnc_strdup_local("error: web_fetch denied by config (always_deny)");
+            return AGNC_STATUS_TOOL_DENIED;
+        }
 
         if (config->ask_web_fetch_permission && !auto_approve) {
             status = agnc_permission_ask_web_fetch(preview, &allowed, interactive_repl);

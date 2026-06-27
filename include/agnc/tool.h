@@ -15,6 +15,9 @@ const char *agnc_tool_shell_command_preview(const char *arguments_json);
 /* Return 1 jika perintah shell adalah pencarian teks/file (harus pakai tool grep/glob). */
 int agnc_tool_shell_is_search_command(const char *command);
 
+/* Return 1 jika perintah shell berisiko tinggi (destructive/system). */
+int agnc_tool_shell_is_dangerous_command(const char *command);
+
 /* Ekstrak field command dari JSON tool shell; pemanggil free(*command_out). */
 agnc_status_t agnc_tool_shell_extract_command(const char *arguments_json, char **command_out);
 

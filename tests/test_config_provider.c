@@ -32,8 +32,12 @@ static void test_load_provider_fixture(void **state)
 
 #ifdef _WIN32
     _putenv_s("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test");
+    _putenv_s("AGNC_MODEL", "");
+    _putenv_s("AGNC_PROVIDER", "");
 #else
     setenv("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test", 1);
+    unsetenv("AGNC_MODEL");
+    unsetenv("AGNC_PROVIDER");
 #endif
 
     snprintf(fixture_path, sizeof(fixture_path), "%s/tests/fixtures/provider_test.json", AGNC_SOURCE_DIR);
@@ -61,8 +65,12 @@ static void test_always_allow_permissions(void **state)
 
 #ifdef _WIN32
     _putenv_s("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test");
+    _putenv_s("AGNC_MODEL", "");
+    _putenv_s("AGNC_PROVIDER", "");
 #else
     setenv("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test", 1);
+    unsetenv("AGNC_MODEL");
+    unsetenv("AGNC_PROVIDER");
 #endif
 
     snprintf(
@@ -84,11 +92,51 @@ static void test_always_allow_permissions(void **state)
     agnc_config_free(&config);
 }
 
+static void test_always_deny_permissions(void **state)
+{
+    agnc_config_t config;
+    agnc_status_t status;
+    char fixture_path[512];
+
+    (void)state;
+
+#ifdef _WIN32
+    _putenv_s("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test");
+    _putenv_s("AGNC_MODEL", "");
+    _putenv_s("AGNC_PROVIDER", "");
+#else
+    setenv("AGNC_TEST_API_KEY", "sk-test-key-for-unit-test", 1);
+    unsetenv("AGNC_MODEL");
+    unsetenv("AGNC_PROVIDER");
+#endif
+
+    snprintf(
+        fixture_path,
+        sizeof(fixture_path),
+        "%s/tests/fixtures/permissions_always_deny.json",
+        AGNC_SOURCE_DIR);
+
+    agnc_config_init(&config);
+    status = agnc_config_load(fixture_path, &config);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(config.deny_shell_permission, 1);
+    assert_int_equal(config.deny_write_permission, 1);
+    assert_int_equal(config.deny_mcp_permission, 1);
+    assert_int_equal(config.deny_web_fetch_permission, 1);
+    assert_int_equal(config.ask_shell_permission, 0);
+    assert_int_equal(config.ask_write_permission, 0);
+    assert_int_equal(config.ask_mcp_permission, 0);
+    assert_int_equal(config.ask_web_fetch_permission, 0);
+
+    agnc_config_free(&config);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_load_provider_fixture),
         cmocka_unit_test(test_always_allow_permissions),
+        cmocka_unit_test(test_always_deny_permissions),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
