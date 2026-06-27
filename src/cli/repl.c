@@ -300,14 +300,21 @@ static void agnc_repl_apply_loaded_session_meta(
     free(loaded_model);
 }
 
-static void agnc_repl_compact_conversation_if_needed(agnc_conversation_t *conversation)
+static void agnc_repl_notify_memory_window(agnc_conversation_t *conversation)
 {
-    size_t before = conversation->count;
+    if (conversation == NULL) {
+        return;
+    }
 
-    (void)agnc_conversation_compact_if_needed(
-        conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
-    if (conversation->count < before) {
-        agnc_console_print_chat_system("riwayat lama diringkas otomatis");
+    if (conversation->memory_skipped > 0) {
+        char detail[96];
+        snprintf(
+            detail,
+            sizeof(detail),
+            "memuat %zu pesan terakhir (%zu pesan lebih lama di storage)",
+            conversation->count,
+            conversation->memory_skipped);
+        agnc_console_print_chat_system(detail);
     }
 }
 
@@ -363,7 +370,7 @@ static agnc_status_t agnc_repl_switch_session(
     }
 
     if (!skip_save && *session_path != NULL) {
-        (void)agnc_session_save(*session_path, conversation, config);
+        (void)agnc_session_sync(*session_path, conversation, config);
     }
 
     status = agnc_session_path_for_name(name, &new_path);
@@ -378,10 +385,10 @@ static agnc_status_t agnc_repl_switch_session(
             agnc_repl_apply_loaded_session_meta(config, loaded_provider, loaded_model);
             loaded_provider = NULL;
             loaded_model = NULL;
-            agnc_repl_compact_conversation_if_needed(conversation);
+            agnc_repl_notify_memory_window(conversation);
         }
     } else {
-        (void)agnc_session_save(new_path, conversation, config);
+        (void)agnc_session_sync(new_path, conversation, config);
     }
 
     free(*session_path);
@@ -426,7 +433,7 @@ static agnc_status_t agnc_repl_delete_session(
             return status;
         }
     } else if (*session_path != NULL) {
-        (void)agnc_session_save(*session_path, conversation, config);
+        (void)agnc_session_sync(*session_path, conversation, config);
     }
 
     return agnc_session_delete_by_name(name);
@@ -451,7 +458,7 @@ static int agnc_repl_handle_slash(
     if (strncmp(line, "/clear", 6) == 0) {
         agnc_conversation_clear(conversation);
         if (*session_path != NULL) {
-            (void)agnc_session_save(*session_path, conversation, config);
+            (void)agnc_session_clear_messages(*session_path, config);
         }
         agnc_console_print_chat_system("riwayat dihapus");
         return 1;
@@ -476,13 +483,20 @@ static int agnc_repl_handle_slash(
         if (status != AGNC_STATUS_OK) {
             agnc_console_print_chat_system("compact gagal");
             fprintf(stderr, "agnc: %s\n", agnc_status_to_string(status));
+        } else if (*session_path != NULL) {
+            status = agnc_session_compact_storage(*session_path, conversation, config, keep);
+            if (status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("compact storage gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(status));
+            } else {
+                char detail[64];
+                snprintf(detail, sizeof(detail), "riwayat diringkas (keep %zu pesan)", keep);
+                agnc_console_print_chat_system(detail);
+            }
         } else {
             char detail[64];
             snprintf(detail, sizeof(detail), "riwayat diringkas (keep %zu pesan)", keep);
             agnc_console_print_chat_system(detail);
-            if (*session_path != NULL) {
-                (void)agnc_session_save(*session_path, conversation, config);
-            }
         }
         return 1;
     }
@@ -717,7 +731,7 @@ int agnc_cli_run_interactive(void)
 
         if (agnc_session_load(session_path, &conversation, &loaded_provider, &loaded_model) == AGNC_STATUS_OK) {
             agnc_repl_apply_loaded_session_meta(&config, loaded_provider, loaded_model);
-            agnc_repl_compact_conversation_if_needed(&conversation);
+            agnc_repl_notify_memory_window(&conversation);
         }
     }
 
@@ -781,7 +795,7 @@ int agnc_cli_run_interactive(void)
         }
 
         if (session_path != NULL) {
-            (void)agnc_session_save(session_path, &conversation, &config);
+            (void)agnc_session_sync(session_path, &conversation, &config);
         }
 
         printf(">\n");
@@ -789,7 +803,7 @@ int agnc_cli_run_interactive(void)
     }
 
     if (session_path != NULL) {
-        (void)agnc_session_save(session_path, &conversation, &config);
+        (void)agnc_session_sync(session_path, &conversation, &config);
     }
 
     free(session_path);

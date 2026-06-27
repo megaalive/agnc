@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.9+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
+| **6. Fitur besar** (Fase 6.10+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -926,6 +926,16 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **6.7.2** | Slash `/session` di REPL | **Selesai** |
 | **6.7.3** | Test + docs + smoke test | **Selesai** |
 
+### 11.14 Fase 6.9 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Conversation dinamis (heap); tidak ada batas 64 pesan in-memory hard cap untuk unsynced.
+- Lazy load: muat `AGNC_CONVERSATION_MEMORY_LIMIT` (48) pesan terakhir dari SQLite.
+- Append-only: `agnc_session_sync` INSERT pesan baru saja (`unsynced_count`).
+- Windowed LLM context: system + ringkasan + tail `AGNC_CONVERSATION_LLM_WINDOW` (32) pesan.
+- `/compact` selaraskan RAM + `agnc_session_compact_storage`.
+
 ### 12.4 Urutan kerja Fase 6.8 (dikunci 2026-06)
 
 | Langkah | Isi | Status |
@@ -933,6 +943,14 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **6.8.1** | Dependency sqlite3 + schema per sesi | **Selesai** |
 | **6.8.2** | Save/load SQLite + migrasi JSON | **Selesai** |
 | **6.8.3** | Test + docs | **Selesai** |
+
+### 12.5 Urutan kerja Fase 6.9 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.9.1** | Conversation dinamis + trim RAM | **Selesai** |
+| **6.9.2** | Lazy load + append-only sync | **Selesai** |
+| **6.9.3** | Windowed context LLM + test/docs | **Selesai** |
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
 
@@ -1079,7 +1097,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.9+** sebelum **6.8** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.10+** sebelum **6.9** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1144,7 +1162,14 @@ Tasks:
 - Migrasi otomatis dari `.json` legacy saat load.
 - Dependency `sqlite3` via vcpkg.
 
-#### Fase 6.9+ — Backlog fitur besar
+#### Fase 6.9 — Session windowed + append-only — **selesai**
+
+Tasks:
+
+- Conversation dinamis; lazy load tail dari SQLite. — `conversation.c`, `session.c`
+- `agnc_session_sync` append-only; windowed context ke LLM. — `query.c`, `repl.c`
+
+#### Fase 6.10+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

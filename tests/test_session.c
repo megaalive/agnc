@@ -165,32 +165,27 @@ static void test_conversation_ensure_system_updates(void **state)
     agnc_conversation_clear(&conversation);
 }
 
-static void test_conversation_compact_when_near_limit(void **state)
+static void test_conversation_trim_after_sync(void **state)
 {
     agnc_conversation_t conversation;
     size_t index;
-    agnc_status_t status;
 
     (void)state;
 
     agnc_conversation_init(&conversation);
     assert_int_equal(agnc_conversation_push(&conversation, "system", "sys", NULL, NULL, NULL), AGNC_STATUS_OK);
 
-    for (index = 0; index < AGNC_MAX_MESSAGES - 1; index++) {
+    for (index = 0; index < 60; index++) {
         char buf[32];
         snprintf(buf, sizeof(buf), "msg-%zu", index);
         assert_int_equal(agnc_conversation_push(&conversation, "user", buf, NULL, NULL, NULL), AGNC_STATUS_OK);
+        conversation.unsynced_count = 0;
+        conversation.db_total++;
+        conversation.memory_skipped = conversation.db_total - conversation.count;
     }
 
-    assert_int_equal((int)conversation.count, AGNC_MAX_MESSAGES);
-
-    status = agnc_conversation_compact_if_needed(
-        &conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
-    assert_int_equal(status, AGNC_STATUS_OK);
-    assert_true(conversation.count < AGNC_MAX_MESSAGES);
-
-    status = agnc_conversation_push(&conversation, "user", "after-compact", NULL, NULL, NULL);
-    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_true(conversation.count <= AGNC_CONVERSATION_MEMORY_LIMIT);
+    assert_true(conversation.memory_skipped > 0);
 
     agnc_conversation_clear(&conversation);
 }
@@ -370,8 +365,10 @@ static void test_session_migrate_json(void **state)
 
     agnc_conversation_init(&loaded);
     agnc_config_init(&config);
+    agnc_conversation_clear(&loaded);
+    assert_int_equal(agnc_session_clear_messages(sqlite_path, &config), AGNC_STATUS_OK);
     assert_int_equal(agnc_conversation_push(&loaded, "user", "new", NULL, NULL, NULL), AGNC_STATUS_OK);
-    assert_int_equal(agnc_session_save(sqlite_path, &loaded, &config), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_sync(sqlite_path, &loaded, &config), AGNC_STATUS_OK);
 
     agnc_conversation_clear(&conversation);
     status = agnc_session_load(sqlite_path, &conversation, NULL, NULL);
@@ -439,13 +436,59 @@ static void test_session_delete_by_name(void **state)
     agnc_config_free(&config);
 }
 
+static void test_session_sync_append(void **state)
+{
+    agnc_conversation_t conversation;
+    agnc_conversation_t loaded;
+    agnc_config_t config;
+    agnc_status_t status;
+    size_t index;
+
+    (void)state;
+
+    agnc_conversation_init(&conversation);
+    agnc_config_init(&config);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "one", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+    assert_int_equal(conversation.unsynced_count, 0);
+    assert_int_equal((int)conversation.db_total, 1);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "assistant", "two", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+    assert_int_equal((int)conversation.db_total, 2);
+
+    for (index = 0; index < 55; index++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "bulk-%zu", index);
+        assert_int_equal(agnc_conversation_push(&conversation, "user", buf, NULL, NULL, NULL), AGNC_STATUS_OK);
+        if ((index % 16) == 15) {
+            assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+        }
+    }
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+    assert_true(conversation.db_total >= 57);
+
+    agnc_conversation_init(&loaded);
+    status = agnc_session_load(g_session_path, &loaded, NULL, NULL);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_true(loaded.count <= AGNC_CONVERSATION_MEMORY_LIMIT);
+    assert_true(loaded.memory_skipped > 0);
+    assert_true(loaded.db_total >= 57);
+
+    agnc_conversation_clear(&loaded);
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+    remove(g_session_path);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_session_save_load_roundtrip, setup_session_path, teardown_session_path),
         cmocka_unit_test(test_session_cleanup_stale_temp_files),
         cmocka_unit_test(test_conversation_ensure_system_updates),
-        cmocka_unit_test(test_conversation_compact_when_near_limit),
+        cmocka_unit_test(test_conversation_trim_after_sync),
         cmocka_unit_test(test_conversation_compact),
         cmocka_unit_test(test_session_validate_name),
         cmocka_unit_test(test_session_path_for_name),
@@ -453,6 +496,7 @@ int main(void)
         cmocka_unit_test(test_session_active_name_roundtrip),
         cmocka_unit_test(test_session_delete_by_name),
         cmocka_unit_test(test_session_migrate_json),
+        cmocka_unit_test_setup_teardown(test_session_sync_append, setup_session_path, teardown_session_path),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

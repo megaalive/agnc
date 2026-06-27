@@ -1,13 +1,12 @@
 /*
  * conversation.c
  *
- * Manajemen daftar pesan chat untuk agent loop multi-turn.
+ * Manajemen daftar pesan chat dinamis untuk agent loop multi-turn.
  */
 
 #include "agnc/conversation.h"
 
 #include <stdlib.h>
-#include <string.h>
 #include <string.h>
 
 static char *agnc_strdup_local(const char *value)
@@ -19,11 +18,89 @@ static char *agnc_strdup_local(const char *value)
 #endif
 }
 
+static agnc_status_t agnc_conversation_reserve(agnc_conversation_t *conversation, size_t needed)
+{
+    agnc_conversation_message_t *grown;
+    size_t new_capacity;
+
+    if (conversation == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (needed <= conversation->capacity) {
+        return AGNC_STATUS_OK;
+    }
+
+    new_capacity = conversation->capacity == 0 ? AGNC_CONVERSATION_INITIAL_CAPACITY : conversation->capacity;
+    while (new_capacity < needed) {
+        new_capacity *= 2;
+    }
+
+    grown = (agnc_conversation_message_t *)realloc(conversation->items, new_capacity * sizeof(*conversation->items));
+    if (grown == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    if (conversation->capacity == 0) {
+        memset(grown, 0, new_capacity * sizeof(*grown));
+    } else if (new_capacity > conversation->capacity) {
+        memset(grown + conversation->capacity, 0, (new_capacity - conversation->capacity) * sizeof(*grown));
+    }
+
+    conversation->items = grown;
+    conversation->capacity = new_capacity;
+    return AGNC_STATUS_OK;
+}
+
+static void agnc_conversation_free_message(agnc_conversation_message_t *message)
+{
+    if (message == NULL) {
+        return;
+    }
+
+    free(message->role);
+    free(message->content);
+    free(message->tool_call_id);
+    free(message->tool_name);
+    free(message->tool_arguments);
+    memset(message, 0, sizeof(*message));
+}
+
+static void agnc_conversation_remove_at(agnc_conversation_t *conversation, size_t remove_index)
+{
+    size_t unsynced_start;
+
+    if (conversation == NULL || remove_index >= conversation->count) {
+        return;
+    }
+
+    unsynced_start = conversation->count - conversation->unsynced_count;
+    if (remove_index >= unsynced_start && conversation->unsynced_count > 0) {
+        conversation->unsynced_count--;
+    } else {
+        conversation->memory_skipped++;
+    }
+
+    agnc_conversation_free_message(&conversation->items[remove_index]);
+    if (remove_index + 1 < conversation->count) {
+        memmove(
+            &conversation->items[remove_index],
+            &conversation->items[remove_index + 1],
+            (conversation->count - remove_index - 1) * sizeof(conversation->items[0]));
+    }
+
+    conversation->count--;
+    if (conversation->count < conversation->capacity) {
+        memset(&conversation->items[conversation->count], 0, sizeof(conversation->items[0]));
+    }
+}
+
 void agnc_conversation_init(agnc_conversation_t *conversation)
 {
     if (conversation == NULL) {
         return;
     }
+
     memset(conversation, 0, sizeof(*conversation));
 }
 
@@ -36,21 +113,21 @@ void agnc_conversation_clear(agnc_conversation_t *conversation)
     }
 
     for (index = 0; index < conversation->count; index++) {
-        agnc_conversation_message_t *item = &conversation->items[index];
-
-        free(item->role);
-        free(item->content);
-        free(item->tool_call_id);
-        free(item->tool_name);
-        free(item->tool_arguments);
-        item->role = NULL;
-        item->content = NULL;
-        item->tool_call_id = NULL;
-        item->tool_name = NULL;
-        item->tool_arguments = NULL;
+        agnc_conversation_free_message(&conversation->items[index]);
     }
 
-    conversation->count = 0;
+    free(conversation->items);
+    free(conversation->history_summary);
+    memset(conversation, 0, sizeof(*conversation));
+}
+
+const agnc_conversation_message_t *agnc_conversation_at(const agnc_conversation_t *conversation, size_t index)
+{
+    if (conversation == NULL || index >= conversation->count) {
+        return NULL;
+    }
+
+    return &conversation->items[index];
 }
 
 agnc_status_t agnc_conversation_push(
@@ -61,14 +138,36 @@ agnc_status_t agnc_conversation_push(
     const char *tool_name,
     const char *tool_arguments)
 {
+    agnc_status_t status;
+
+    status = agnc_conversation_push_hydrated(
+        conversation, role, content, tool_call_id, tool_name, tool_arguments);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    conversation->unsynced_count++;
+    return agnc_conversation_trim_memory(conversation);
+}
+
+agnc_status_t agnc_conversation_push_hydrated(
+    agnc_conversation_t *conversation,
+    const char *role,
+    const char *content,
+    const char *tool_call_id,
+    const char *tool_name,
+    const char *tool_arguments)
+{
     agnc_conversation_message_t *message;
+    agnc_status_t status;
 
     if (conversation == NULL || role == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (conversation->count >= AGNC_MAX_MESSAGES) {
-        return AGNC_STATUS_PROVIDER_ERROR;
+    status = agnc_conversation_reserve(conversation, conversation->count + 1);
+    if (status != AGNC_STATUS_OK) {
+        return status;
     }
 
     message = &conversation->items[conversation->count++];
@@ -79,6 +178,7 @@ agnc_status_t agnc_conversation_push(
     message->tool_arguments = tool_arguments != NULL ? agnc_strdup_local(tool_arguments) : NULL;
 
     if (message->role == NULL) {
+        conversation->count--;
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
@@ -115,79 +215,108 @@ agnc_status_t agnc_conversation_ensure_system(agnc_conversation_t *conversation,
     return agnc_conversation_push(conversation, "system", system_prompt, NULL, NULL, NULL);
 }
 
-agnc_status_t agnc_conversation_compact_if_needed(
-    agnc_conversation_t *conversation,
-    size_t threshold,
-    size_t keep_tail_messages)
+agnc_status_t agnc_conversation_trim_memory(agnc_conversation_t *conversation)
 {
+    size_t remove_index;
+    size_t persisted_in_memory;
+
+    /* Hanya buang pesan yang sudah ada di SQLite; unsynced suffix tetap di RAM. */
     if (conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (conversation->count < threshold) {
-        return AGNC_STATUS_OK;
+    while (conversation->count > AGNC_CONVERSATION_MEMORY_LIMIT) {
+        persisted_in_memory = conversation->count - conversation->unsynced_count;
+        if (persisted_in_memory == 0) {
+            break;
+        }
+
+        remove_index = 0;
+        if (conversation->count > 0 && conversation->items[0].role != NULL &&
+            strcmp(conversation->items[0].role, "system") == 0) {
+            if (persisted_in_memory <= 1) {
+                break;
+            }
+            remove_index = 1;
+        }
+
+        if (remove_index >= conversation->count - conversation->unsynced_count) {
+            break;
+        }
+
+        agnc_conversation_remove_at(conversation, remove_index);
     }
 
-    return agnc_conversation_compact(conversation, keep_tail_messages);
+    return AGNC_STATUS_OK;
 }
 
 agnc_status_t agnc_conversation_compact(agnc_conversation_t *conversation, size_t keep_tail_messages)
 {
-    agnc_conversation_t kept;
-    size_t start;
-    size_t index;
-    agnc_status_t status = AGNC_STATUS_OK;
-    int has_system = 0;
+    size_t remove_index;
 
     if (conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (conversation->count <= keep_tail_messages + 1) {
-        return AGNC_STATUS_OK;
-    }
+    while (conversation->count > 0) {
+        size_t non_system_count = 0;
+        size_t index;
 
-    agnc_conversation_init(&kept);
-
-    if (conversation->count > 0 && conversation->items[0].role != NULL &&
-        strcmp(conversation->items[0].role, "system") == 0) {
-        status = agnc_conversation_push(
-            &kept,
-            "system",
-            conversation->items[0].content,
-            NULL,
-            NULL,
-            NULL);
-        if (status != AGNC_STATUS_OK) {
-            agnc_conversation_clear(&kept);
-            return status;
+        for (index = 0; index < conversation->count; index++) {
+            if (conversation->items[index].role != NULL && strcmp(conversation->items[index].role, "system") != 0) {
+                non_system_count++;
+            }
         }
-        has_system = 1;
-    }
 
-    if (conversation->count <= keep_tail_messages + (size_t)has_system) {
-        agnc_conversation_clear(&kept);
-        return AGNC_STATUS_OK;
-    }
-
-    start = conversation->count - keep_tail_messages;
-    for (index = start; index < conversation->count; index++) {
-        agnc_conversation_message_t *item = &conversation->items[index];
-
-        status = agnc_conversation_push(
-            &kept,
-            item->role,
-            item->content,
-            item->tool_call_id,
-            item->tool_name,
-            item->tool_arguments);
-        if (status != AGNC_STATUS_OK) {
-            agnc_conversation_clear(&kept);
-            return status;
+        if (non_system_count <= keep_tail_messages) {
+            break;
         }
+
+        remove_index = 0;
+        if (conversation->count > 0 && conversation->items[0].role != NULL &&
+            strcmp(conversation->items[0].role, "system") == 0) {
+            if (conversation->count <= 1) {
+                break;
+            }
+            remove_index = 1;
+        }
+
+        agnc_conversation_remove_at(conversation, remove_index);
     }
 
-    agnc_conversation_clear(conversation);
-    *conversation = kept;
     return AGNC_STATUS_OK;
+}
+
+size_t agnc_conversation_llm_start_index(const agnc_conversation_t *conversation)
+{
+    size_t tail_budget = AGNC_CONVERSATION_LLM_WINDOW;
+    int has_system = 0;
+
+    if (conversation == NULL || conversation->count == 0) {
+        return 0;
+    }
+
+    if (conversation->items[0].role != NULL && strcmp(conversation->items[0].role, "system") == 0) {
+        has_system = 1;
+        if (conversation->count <= 1 + tail_budget) {
+            return 0;
+        }
+        return conversation->count - tail_budget;
+    }
+
+    if (conversation->count <= tail_budget) {
+        return 0;
+    }
+
+    return conversation->count - tail_budget;
+}
+
+int agnc_conversation_llm_needs_summary(const agnc_conversation_t *conversation)
+{
+    if (conversation == NULL) {
+        return 0;
+    }
+
+    return conversation->memory_skipped > 0 ||
+        (conversation->db_total > conversation->count && conversation->count > 0);
 }

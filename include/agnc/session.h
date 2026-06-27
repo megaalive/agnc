@@ -49,9 +49,25 @@ agnc_status_t agnc_session_load(
     char **provider_id_out,
     char **model_out);
 
+/* Append pesan baru (unsynced) + meta; menggantikan full rewrite. */
+agnc_status_t agnc_session_sync(
+    const char *path,
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config);
+
 agnc_status_t agnc_session_save(
     const char *path,
     const agnc_conversation_t *conversation,
     const agnc_config_t *config);
+
+/* Hapus semua pesan di DB sesi (mis. /clear). */
+agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t *config);
+
+/* Ringkas DB + meta summary; muat ulang tail ke conversation. */
+agnc_status_t agnc_session_compact_storage(
+    const char *path,
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config,
+    size_t keep_tail_messages);
 
 #endif /* AGNC_SESSION_H */

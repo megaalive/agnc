@@ -716,7 +716,7 @@ static agnc_status_t agnc_session_load_json_file(
                 continue;
             }
 
-            status = agnc_conversation_push(
+            status = agnc_conversation_push_hydrated(
                 conversation,
                 yyjson_get_str(role),
                 content != NULL && yyjson_is_str(content) ? yyjson_get_str(content) : NULL,
@@ -836,7 +836,10 @@ static agnc_status_t agnc_session_write_sqlite_file(
     }
 
     for (index = 0; index < conversation->count; index++) {
-        const agnc_conversation_message_t *item = &conversation->items[index];
+        const agnc_conversation_message_t *item = agnc_conversation_at(conversation, index);
+        if (item == NULL) {
+            continue;
+        }
 
         sqlite3_reset(insert_stmt);
         sqlite3_clear_bindings(insert_stmt);
@@ -881,16 +884,138 @@ static agnc_status_t agnc_session_write_sqlite_file(
     return AGNC_STATUS_OK;
 }
 
-static agnc_status_t agnc_session_load_sqlite_file(
+static agnc_status_t agnc_session_sqlite_message_count(sqlite3 *db, size_t *count_out)
+{
+    sqlite3_stmt *stmt = NULL;
+    int rc;
+
+    if (count_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *count_out = 0;
+    rc = sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM messages", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *count_out = (size_t)sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+static agnc_status_t agnc_session_sqlite_update_meta(
+    sqlite3 *db,
+    const agnc_config_t *config,
+    const agnc_conversation_t *conversation)
+{
+    char saved_at[32];
+    time_t now;
+
+    time(&now);
+    snprintf(saved_at, sizeof(saved_at), "%lld", (long long)now);
+    if (agnc_session_sqlite_meta_set(db, "saved_at", saved_at) != AGNC_STATUS_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (conversation != NULL && conversation->history_summary != NULL) {
+        if (agnc_session_sqlite_meta_set(db, "history_summary", conversation->history_summary) != AGNC_STATUS_OK) {
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    if (conversation != NULL && conversation->memory_skipped > 0) {
+        char skipped[32];
+        snprintf(skipped, sizeof(skipped), "%zu", conversation->memory_skipped);
+        if (agnc_session_sqlite_meta_set(db, "memory_skipped", skipped) != AGNC_STATUS_OK) {
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    if (config != NULL) {
+        if (config->provider_id != NULL &&
+            agnc_session_sqlite_meta_set(db, "provider_id", config->provider_id) != AGNC_STATUS_OK) {
+            return AGNC_STATUS_IO_ERROR;
+        }
+        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "model", config->model) != AGNC_STATUS_OK) {
+            return AGNC_STATUS_IO_ERROR;
+        }
+        if (config->gateway_id != NULL &&
+            agnc_session_sqlite_meta_set(db, "gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_session_sqlite_append_message(sqlite3 *db, const agnc_conversation_message_t *item)
+{
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (item == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments) "
+        "VALUES(?, ?, ?, ?, ?)",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (item->role == NULL || sqlite3_bind_text(stmt, 1, item->role, -1, SQLITE_STATIC) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_bind_text_or_null(stmt, 2, item->content);
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 3, item->tool_call_id);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 4, item->tool_name);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 5, item->tool_arguments);
+    }
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_finalize(stmt);
+        return status;
+    }
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+static agnc_status_t agnc_session_load_sqlite_tail(
     const char *path,
     agnc_conversation_t *conversation,
     char **provider_id_out,
-    char **model_out)
+    char **model_out,
+    size_t tail_limit)
 {
     sqlite3 *db = NULL;
     sqlite3_stmt *stmt = NULL;
+    size_t total = 0;
+    size_t offset = 0;
     agnc_status_t status = AGNC_STATUS_OK;
     int rc;
+
+    if (tail_limit == 0) {
+        tail_limit = AGNC_CONVERSATION_MEMORY_LIMIT;
+    }
 
     rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
     if (rc != SQLITE_OK || db == NULL) {
@@ -900,10 +1025,45 @@ static agnc_status_t agnc_session_load_sqlite_file(
         return AGNC_STATUS_IO_ERROR;
     }
 
+    status = agnc_session_sqlite_message_count(db, &total);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    agnc_conversation_clear(conversation);
+    conversation->db_total = total;
+    conversation->unsynced_count = 0;
+
+    if (total > tail_limit) {
+        offset = total - tail_limit;
+        conversation->memory_skipped = offset;
+    } else {
+        conversation->memory_skipped = 0;
+    }
+
+    if (provider_id_out != NULL) {
+        status = agnc_session_sqlite_meta_get(db, "provider_id", provider_id_out);
+    }
+    if (status == AGNC_STATUS_OK && model_out != NULL) {
+        status = agnc_session_sqlite_meta_get(db, "model", model_out);
+    }
+    if (status == AGNC_STATUS_OK) {
+        char *summary = NULL;
+        if (agnc_session_sqlite_meta_get(db, "history_summary", &summary) == AGNC_STATUS_OK) {
+            conversation->history_summary = summary;
+        }
+    }
+
+    if (status != AGNC_STATUS_OK || total == 0) {
+        sqlite3_close(db);
+        return status;
+    }
+
     rc = sqlite3_prepare_v2(
         db,
         "SELECT role, content, tool_call_id, tool_name, tool_arguments "
-        "FROM messages ORDER BY id ASC",
+        "FROM messages ORDER BY id ASC LIMIT -1 OFFSET ?",
         -1,
         &stmt,
         NULL);
@@ -912,7 +1072,12 @@ static agnc_status_t agnc_session_load_sqlite_file(
         return AGNC_STATUS_IO_ERROR;
     }
 
-    agnc_conversation_clear(conversation);
+    if (sqlite3_bind_int64(stmt, 1, (sqlite3_int64)offset) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         const char *role = (const char *)sqlite3_column_text(stmt, 0);
         const char *content = (const char *)sqlite3_column_text(stmt, 1);
@@ -924,29 +1089,26 @@ static agnc_status_t agnc_session_load_sqlite_file(
             continue;
         }
 
-        status = agnc_conversation_push(
-            conversation,
-            role,
-            content,
-            tool_call_id,
-            tool_name,
-            tool_arguments);
+        status = agnc_conversation_push_hydrated(
+            conversation, role, content, tool_call_id, tool_name, tool_arguments);
         if (status != AGNC_STATUS_OK) {
             break;
         }
     }
 
     sqlite3_finalize(stmt);
-
-    if (status == AGNC_STATUS_OK && provider_id_out != NULL) {
-        status = agnc_session_sqlite_meta_get(db, "provider_id", provider_id_out);
-    }
-    if (status == AGNC_STATUS_OK && model_out != NULL) {
-        status = agnc_session_sqlite_meta_get(db, "model", model_out);
-    }
-
     sqlite3_close(db);
     return status;
+}
+
+static agnc_status_t agnc_session_load_sqlite_file(
+    const char *path,
+    agnc_conversation_t *conversation,
+    char **provider_id_out,
+    char **model_out)
+{
+    return agnc_session_load_sqlite_tail(
+        path, conversation, provider_id_out, model_out, AGNC_CONVERSATION_MEMORY_LIMIT);
 }
 
 static agnc_status_t agnc_session_migrate_json_file(const char *json_path, const char *sqlite_path)
@@ -1264,39 +1426,256 @@ agnc_status_t agnc_session_load(
     return agnc_session_load_sqlite_file(path, conversation, provider_id_out, model_out);
 }
 
-agnc_status_t agnc_session_save(
+agnc_status_t agnc_session_sync(
     const char *path,
-    const agnc_conversation_t *conversation,
+    agnc_conversation_t *conversation,
     const agnc_config_t *config)
 {
-    char *temp_path = NULL;
+    sqlite3 *db = NULL;
+    size_t index;
+    size_t append_start;
     agnc_status_t status;
+    int rc;
+    int created = 0;
 
     if (path == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    temp_path = (char *)malloc(strlen(path) + 8);
-    if (temp_path == NULL) {
-        return AGNC_STATUS_OUT_OF_MEMORY;
+    if (conversation->unsynced_count == 0) {
+        if (!agnc_path_exists(path)) {
+            if (config == NULL) {
+                return AGNC_STATUS_OK;
+            }
+        } else {
+            rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+            if (rc != SQLITE_OK || db == NULL) {
+                if (db != NULL) {
+                    sqlite3_close(db);
+                }
+                return AGNC_STATUS_IO_ERROR;
+            }
+
+            if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+                sqlite3_close(db);
+                return AGNC_STATUS_IO_ERROR;
+            }
+
+            status = agnc_session_sqlite_update_meta(db, config, conversation);
+            if (status == AGNC_STATUS_OK) {
+                status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+            } else {
+                (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            }
+
+            sqlite3_close(db);
+            return status;
+        }
     }
 
-    snprintf(temp_path, strlen(path) + 8, "%s.tmp", path);
-    (void)remove(temp_path);
-
-    status = agnc_session_write_sqlite_file(temp_path, conversation, config);
-    if (status != AGNC_STATUS_OK) {
-        free(temp_path);
-        return status;
-    }
-
-    (void)remove(path);
-    if (rename(temp_path, path) != 0) {
-        (void)remove(temp_path);
-        free(temp_path);
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
         return AGNC_STATUS_IO_ERROR;
     }
 
-    free(temp_path);
+    if (!agnc_path_exists(path)) {
+        created = 1;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    append_start = conversation->count - conversation->unsynced_count;
+    for (index = append_start; index < conversation->count; index++) {
+        const agnc_conversation_message_t *item = agnc_conversation_at(conversation, index);
+
+        status = agnc_session_sqlite_append_message(db, item);
+        if (status != AGNC_STATUS_OK) {
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            return status;
+        }
+    }
+
+    status = agnc_session_sqlite_update_meta(db, config, conversation);
+    if (status != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (agnc_session_sqlite_message_count(db, &conversation->db_total) != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    conversation->unsynced_count = 0;
+    sqlite3_close(db);
+    (void)created;
     return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t *config)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "DELETE FROM messages") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_update_meta(db, config, NULL);
+    if (status != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_close(db);
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_compact_storage(
+    const char *path,
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config,
+    size_t keep_tail_messages)
+{
+    sqlite3 *db = NULL;
+    char summary[160];
+    char *provider_id = NULL;
+    char *model = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || conversation == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (!agnc_path_exists(path)) {
+        return agnc_session_sync(path, conversation, config);
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    {
+        sqlite3_stmt *del_stmt = NULL;
+        size_t remaining = 0;
+
+        rc = sqlite3_prepare_v2(
+            db,
+            "DELETE FROM messages WHERE id NOT IN ("
+            "  SELECT id FROM messages ORDER BY id DESC LIMIT ?"
+            ")",
+            -1,
+            &del_stmt,
+            NULL);
+        if (rc != SQLITE_OK) {
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            return AGNC_STATUS_IO_ERROR;
+        }
+
+        if (sqlite3_bind_int64(del_stmt, 1, (sqlite3_int64)keep_tail_messages) != SQLITE_OK ||
+            sqlite3_step(del_stmt) != SQLITE_DONE) {
+            sqlite3_finalize(del_stmt);
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            return AGNC_STATUS_IO_ERROR;
+        }
+        sqlite3_finalize(del_stmt);
+
+        if (agnc_session_sqlite_message_count(db, &remaining) == AGNC_STATUS_OK) {
+            snprintf(
+                summary,
+                sizeof(summary),
+                "Riwayat diringkas; %zu pesan terakhir dipertahankan di storage.",
+                remaining);
+        } else {
+            snprintf(summary, sizeof(summary), "Riwayat diringkas.");
+        }
+
+        free(conversation->history_summary);
+        conversation->history_summary = agnc_strdup_local(summary);
+        if (conversation->history_summary != NULL) {
+            (void)agnc_session_sqlite_meta_set(db, "history_summary", conversation->history_summary);
+        }
+    }
+
+    status = agnc_session_sqlite_update_meta(db, config, conversation);
+    if (status != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_close(db);
+
+    status = agnc_session_load_sqlite_tail(path, conversation, &provider_id, &model, AGNC_CONVERSATION_MEMORY_LIMIT);
+    free(provider_id);
+    free(model);
+    return status;
+}
+
+agnc_status_t agnc_session_save(
+    const char *path,
+    const agnc_conversation_t *conversation,
+    const agnc_config_t *config)
+{
+    if (conversation == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    return agnc_session_sync(path, (agnc_conversation_t *)conversation, config);
 }

@@ -47,6 +47,8 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] Buka REPL lagi — riwayat sesi aktif dimuat (`active.txt`)
 - [ ] `/session` — daftar sesi; `/session new test` lalu `/session current` — pindah sesi tanpa kehilangan riwayat
 - [ ] `/session delete test` — file sesi terhapus; jika sesi aktif, REPL pindah ke `current` kosong
+- [ ] Lazy load: buka REPL dengan sesi panjang — notifikasi "memuat N pesan terakhir" (bukan full history di RAM)
+- [ ] `/compact 24` — RAM + SQLite diringkas; file `.sqlite` lebih kecil setelah compact
 
 ## Catatan
 

@@ -2,6 +2,7 @@
  * conversation.h
  *
  * Daftar pesan multi-turn untuk agent loop (system, user, assistant, tool).
+ * Buffer dinamis di RAM; riwayat penuh di SQLite sesi.
  */
 
 #ifndef AGNC_CONVERSATION_H
@@ -11,10 +12,15 @@
 
 #include <stddef.h>
 
-#define AGNC_MAX_MESSAGES 64
+/* Pesan dimuat ke RAM (lazy load dari SQLite). */
+#define AGNC_CONVERSATION_MEMORY_LIMIT 48
 
-/* Auto-ringkas saat mendekati batas (mis. output tool `dir` membesar). */
-#define AGNC_CONVERSATION_COMPACT_THRESHOLD 52
+/* Pesan non-system maksimum dikirim ke LLM per request (windowed context). */
+#define AGNC_CONVERSATION_LLM_WINDOW 32
+
+#define AGNC_CONVERSATION_INITIAL_CAPACITY 16
+
+/* Default /compact: keep N pesan tail (+ system). */
 #define AGNC_CONVERSATION_COMPACT_KEEP 24
 
 typedef struct {
@@ -26,12 +32,19 @@ typedef struct {
 } agnc_conversation_message_t;
 
 typedef struct {
-    agnc_conversation_message_t items[AGNC_MAX_MESSAGES];
+    agnc_conversation_message_t *items;
     size_t count;
+    size_t capacity;
+    size_t db_total;         /* total baris messages di SQLite */
+    size_t memory_skipped;   /* pesan lama di DB, tidak ada di RAM */
+    size_t unsynced_count;   /* suffix items[] belum disync ke DB */
+    char *history_summary;   /* ringkasan untuk windowed context LLM */
 } agnc_conversation_t;
 
 void agnc_conversation_init(agnc_conversation_t *conversation);
 void agnc_conversation_clear(agnc_conversation_t *conversation);
+
+const agnc_conversation_message_t *agnc_conversation_at(const agnc_conversation_t *conversation, size_t index);
 
 agnc_status_t agnc_conversation_push(
     agnc_conversation_t *conversation,
@@ -41,19 +54,30 @@ agnc_status_t agnc_conversation_push(
     const char *tool_name,
     const char *tool_arguments);
 
-/* Pastikan system prompt ada; perbarui isi jika sudah ada (workspace root, dll.). */
+/* Muat pesan dari SQLite ke RAM tanpa menandai unsynced. */
+agnc_status_t agnc_conversation_push_hydrated(
+    agnc_conversation_t *conversation,
+    const char *role,
+    const char *content,
+    const char *tool_call_id,
+    const char *tool_name,
+    const char *tool_arguments);
+
 agnc_status_t agnc_conversation_ensure_system(agnc_conversation_t *conversation, const char *system_prompt);
 
-/* Ringkas otomatis jika count >= threshold. */
-agnc_status_t agnc_conversation_compact_if_needed(
-    agnc_conversation_t *conversation,
-    size_t threshold,
-    size_t keep_tail_messages);
+/* Potong RAM ke memory limit; pesan yang di-drop tetap di SQLite. */
+agnc_status_t agnc_conversation_trim_memory(agnc_conversation_t *conversation);
 
 /*
- * Ringkas riwayat: pertahankan system (jika ada) + N pasangan pesan terakhir.
- * Tool message dihitung sebagai satu pesan dalam pasangan.
+ * Ringkas: pertahankan system + N pesan tail di RAM.
+ * Pemanggil wajib memanggil agnc_session_compact_storage untuk selaraskan DB.
  */
 agnc_status_t agnc_conversation_compact(agnc_conversation_t *conversation, size_t keep_tail_messages);
+
+/* Indeks awal items[] untuk window LLM (system + tail). */
+size_t agnc_conversation_llm_start_index(const agnc_conversation_t *conversation);
+
+/* 1 jika perlu sisipkan pesan ringkasan riwayat sebelum tail. */
+int agnc_conversation_llm_needs_summary(const agnc_conversation_t *conversation);
 
 #endif /* AGNC_CONVERSATION_H */

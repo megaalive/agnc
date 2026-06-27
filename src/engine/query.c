@@ -414,7 +414,6 @@ static char *agnc_build_request_json(
     yyjson_mut_val *messages_arr;
     yyjson_mut_val *tools_arr;
     char *result;
-    size_t index;
     const agnc_gateway_descriptor_t *gateway;
     const char *api_model;
 
@@ -437,35 +436,89 @@ static char *agnc_build_request_json(
     messages_arr = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "messages", messages_arr);
 
-    for (index = 0; index < conversation->count; index++) {
-        const agnc_conversation_message_t *message = &conversation->items[index];
-        yyjson_mut_val *entry = yyjson_mut_obj(doc);
+    if (conversation != NULL && conversation->count > 0) {
+        size_t index;
+        size_t tail_start;
+        int has_system = conversation->items[0].role != NULL && strcmp(conversation->items[0].role, "system") == 0;
+        int summary_added = 0;
 
-        yyjson_mut_obj_add_str(doc, entry, "role", message->role);
+        if (has_system) {
+            const agnc_conversation_message_t *system_message = agnc_conversation_at(conversation, 0);
+            yyjson_mut_val *entry = yyjson_mut_obj(doc);
 
-        if (strcmp(message->role, "tool") == 0) {
-            yyjson_mut_obj_add_str(doc, entry, "tool_call_id", message->tool_call_id);
-            yyjson_mut_obj_add_str(doc, entry, "content", message->content != NULL ? message->content : "");
-        } else if (message->tool_name != NULL) {
-            yyjson_mut_val *tool_calls = yyjson_mut_arr(doc);
-            yyjson_mut_val *tool_call = yyjson_mut_obj(doc);
-            yyjson_mut_val *function = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, entry, "role", system_message->role);
+            yyjson_mut_obj_add_str(
+                doc, entry, "content", system_message->content != NULL ? system_message->content : "");
+            yyjson_mut_arr_append(messages_arr, entry);
 
-            yyjson_mut_arr_append(tool_calls, tool_call);
-            yyjson_mut_obj_add_val(doc, entry, "tool_calls", tool_calls);
-            yyjson_mut_obj_add_str(doc, tool_call, "id", message->tool_call_id);
-            yyjson_mut_obj_add_str(doc, tool_call, "type", "function");
-            yyjson_mut_obj_add_val(doc, tool_call, "function", function);
-            yyjson_mut_obj_add_str(doc, function, "name", message->tool_name);
-            yyjson_mut_obj_add_str(doc, function, "arguments", message->tool_arguments != NULL ? message->tool_arguments : "{}");
-            if (message->content != NULL) {
-                yyjson_mut_obj_add_str(doc, entry, "content", message->content);
-            }
+            tail_start = conversation->count > 1 + AGNC_CONVERSATION_LLM_WINDOW
+                ? conversation->count - AGNC_CONVERSATION_LLM_WINDOW
+                : 1;
         } else {
-            yyjson_mut_obj_add_str(doc, entry, "content", message->content != NULL ? message->content : "");
+            tail_start = conversation->count > AGNC_CONVERSATION_LLM_WINDOW
+                ? conversation->count - AGNC_CONVERSATION_LLM_WINDOW
+                : 0;
         }
 
-        yyjson_mut_arr_append(messages_arr, entry);
+        for (index = tail_start; index < conversation->count; index++) {
+            const agnc_conversation_message_t *message = agnc_conversation_at(conversation, index);
+
+            if (message == NULL) {
+                continue;
+            }
+
+            if (!summary_added && index == tail_start && agnc_conversation_llm_needs_summary(conversation)) {
+                yyjson_mut_val *summary_entry = yyjson_mut_obj(doc);
+                char summary_text[512];
+                const char *summary_body = conversation->history_summary;
+
+                if (summary_body == NULL || summary_body[0] == '\0') {
+                    snprintf(
+                        summary_text,
+                        sizeof(summary_text),
+                        "[Ringkasan] %zu pesan sebelumnya tidak disertakan ke context model.",
+                        conversation->memory_skipped > 0 ? conversation->memory_skipped : conversation->db_total -
+                                                                                               conversation->count);
+                    summary_body = summary_text;
+                }
+
+                yyjson_mut_obj_add_str(doc, summary_entry, "role", "user");
+                yyjson_mut_obj_add_str(doc, summary_entry, "content", summary_body);
+                yyjson_mut_arr_append(messages_arr, summary_entry);
+                summary_added = 1;
+            }
+
+            {
+                yyjson_mut_val *entry = yyjson_mut_obj(doc);
+
+                yyjson_mut_obj_add_str(doc, entry, "role", message->role);
+
+                if (strcmp(message->role, "tool") == 0) {
+                    yyjson_mut_obj_add_str(doc, entry, "tool_call_id", message->tool_call_id);
+                    yyjson_mut_obj_add_str(doc, entry, "content", message->content != NULL ? message->content : "");
+                } else if (message->tool_name != NULL) {
+                    yyjson_mut_val *tool_calls = yyjson_mut_arr(doc);
+                    yyjson_mut_val *tool_call = yyjson_mut_obj(doc);
+                    yyjson_mut_val *function = yyjson_mut_obj(doc);
+
+                    yyjson_mut_arr_append(tool_calls, tool_call);
+                    yyjson_mut_obj_add_val(doc, entry, "tool_calls", tool_calls);
+                    yyjson_mut_obj_add_str(doc, tool_call, "id", message->tool_call_id);
+                    yyjson_mut_obj_add_str(doc, tool_call, "type", "function");
+                    yyjson_mut_obj_add_val(doc, tool_call, "function", function);
+                    yyjson_mut_obj_add_str(doc, function, "name", message->tool_name);
+                    yyjson_mut_obj_add_str(
+                        doc, function, "arguments", message->tool_arguments != NULL ? message->tool_arguments : "{}");
+                    if (message->content != NULL) {
+                        yyjson_mut_obj_add_str(doc, entry, "content", message->content);
+                    }
+                } else {
+                    yyjson_mut_obj_add_str(doc, entry, "content", message->content != NULL ? message->content : "");
+                }
+
+                yyjson_mut_arr_append(messages_arr, entry);
+            }
+        }
     }
 
     if (config->enable_tools || (mcp_catalog != NULL && mcp_catalog->count > 0)) {
@@ -994,15 +1047,8 @@ agnc_status_t agnc_query_run(
             config->tool_shell = 0;
         }
 
-        (void)agnc_conversation_compact_if_needed(
-            conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
-
         status = agnc_conversation_push(conversation, "user", user_prompt, NULL, NULL, NULL);
         if (status != AGNC_STATUS_OK) {
-            agnc_query_report_repl_error(
-                chat_assistant_timestamp,
-                status,
-                "riwayat percakapan penuh — ketik /compact atau /clear");
             return status;
         }
     }
@@ -1023,9 +1069,6 @@ agnc_status_t agnc_query_run(
 
     for (iteration = 0; iteration < (size_t)config->max_tool_iterations; iteration++) {
         const agnc_sse_tool_call_t *tool_call;
-
-        (void)agnc_conversation_compact_if_needed(
-            conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
 
         agnc_sse_parser_free(&parser);
         agnc_sse_parser_init(&parser, config->stream, config->verbose);

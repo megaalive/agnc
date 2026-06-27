@@ -74,7 +74,7 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/
 
 **Tampilan REPL:** blok chat ber-timestamp, warna (user hijau, kode abu-abu, sistem dim), spinner saat menunggu model, log aktivitas tool, prompt izin tool terintegrasi.
 
-**Session:** multi-sesi bernama di `%USERPROFILE%\.agnc\sessions\<nama>.sqlite` (1 sesi = 1 SQLite); pointer aktif di `active.txt`. File `.json` legacy dimigrasi otomatis saat sesi dibuka. Perintah `/session` (daftar), `/session <nama>` (pindah), `/session new <nama>` (sesi kosong), `/session delete <nama>` (hapus file sesi).
+**Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis.
 
 Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
@@ -165,4 +165,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.6** — `/mcp`, token usage REPL, MCP auto-reconnect: selesai
 - **Fase 6.7** — multi-session REPL (`/session`): selesai
 - **Fase 6.8** — session SQLite (1 sesi = 1 file): selesai
-- **Fase 6.9+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.9** — lazy load, append-only sync, windowed LLM context: selesai
+- **Fase 6.10+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)
