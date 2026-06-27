@@ -31,6 +31,11 @@
 #define MD_CELL_MAX 384
 #define MD_LINE_MAX 1024
 
+/* Buffer baris/tabel besar dialokasikan di heap (bukan stack) agar lolos MSVC C6262. */
+typedef char agnc_md_line_buf_t[MD_LINE_MAX];
+typedef char agnc_md_table_row_t[MD_MAX_COLS][MD_CELL_MAX];
+typedef char agnc_md_wrapped_col_t[16][MD_CELL_MAX];
+
 #define AGNC_DIR_TREE_FENCE "```tree"
 
 #define VT() agnc_console_vt_enabled()
@@ -48,8 +53,8 @@ static int agnc_terminal_width(void) {
 }
 
 static void trim_spaces(char* s) {
-    size_t len;
-    char* start;
+    size_t len = 0;
+    char* start = NULL;
     if (!s) return;
     start = s;
     while (*start == ' ' || *start == '\t') start++;
@@ -62,7 +67,7 @@ static void trim_spaces(char* s) {
 }
 
 static int is_table_separator_line(const char* line) {
-    const char* p;
+    const char* p = line;
     int dash = 0;
     if (!line || line[0] != '|') return 0;
     for (p = line; *p; p++) {
@@ -89,7 +94,7 @@ static int is_tree_fence_open(const char* line) {
 }
 
 static int is_box_drawing_line(const char* line) {
-    const char* p;
+    const char* p = line;
     int special = 0;
     int plain = 0;
     if (!line || !line[0]) return 0;
@@ -107,7 +112,7 @@ static int is_box_drawing_line(const char* line) {
 }
 
 static void write_indent(int indent) {
-    int i;
+    int i = 0;
     for (i = 0; i < indent; i++) putchar(' ');
 }
 
@@ -117,10 +122,10 @@ static void write_plain(const char* text, size_t len) {
 }
 
 static int markdown_plain_width(const char* text) {
-    char buf[MD_CELL_MAX];
+    char buf[MD_CELL_MAX] = {0};
     size_t bi = 0;
     size_t i = 0;
-    size_t len;
+    size_t len = 0;
 
     if (!text) return 0;
     len = strlen(text);
@@ -236,7 +241,7 @@ static void write_inline_markdown(const char* text, size_t text_len) {
 
 static void normalize_cell_html(char* cell) {
     char* dst;
-    const char* src;
+    const char* src = NULL;
     if (!cell) return;
     dst = cell;
     src = cell;
@@ -293,7 +298,7 @@ static int is_wrap_break_char(char ch) {
 }
 
 static int wrap_cell_lines(const char* cell, int width, char lines[16][MD_CELL_MAX], int max_lines) {
-    const char* segment;
+    const char* segment = NULL;
     int count = 0;
     char segment_buf[MD_CELL_MAX];
 
@@ -314,7 +319,7 @@ static int wrap_cell_lines(const char* cell, int width, char lines[16][MD_CELL_M
             while (*p && count < max_lines) {
                 size_t len = strlen(p);
                 size_t take = len;
-                const char* break_at;
+                const char* break_at = NULL;
                 if (take > (size_t)width) {
                     take = (size_t)width;
                     break_at = p + take;
@@ -386,7 +391,7 @@ static int wrap_cell_lines(const char* cell, int width, char lines[16][MD_CELL_M
 
 static int cell_max_line_width(const char* cell) {
     int max_w = 0;
-    const char* p;
+    const char* p = NULL;
     if (!cell) return 0;
     p = cell;
     while (*p) {
@@ -414,7 +419,7 @@ static int is_generic_table_header(const char* cell) {
         "keterangan", "penjelasan", "deskripsi", "value", "nilai", "detail", "informasi", "atribut", "property",
         "kolom", "istilah", "unsur", "parameter", NULL};
     char buf[MD_CELL_MAX];
-    int i;
+    int i = 0;
 
     if (!cell) return 0;
     strncpy(buf, cell, sizeof(buf) - 1);
@@ -435,7 +440,7 @@ static int is_two_column_comparison(char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL
 }
 
 static void render_vs_legend(int indent, const char* const* names, int count) {
-    int j;
+    int j = 0;
 
     write_indent(indent);
     for (j = 0; j < count; j++) {
@@ -458,7 +463,7 @@ static void render_row_separator(int indent) {
 
 static int measure_label_width(const char* const* labels, int count) {
     int label_w = 0;
-    int j;
+    int j = 0;
 
     for (j = 0; j < count; j++) {
         int hl = markdown_plain_width(labels[j]);
@@ -471,17 +476,17 @@ static int measure_label_width(const char* const* labels, int count) {
 
 static void render_label_value_pairs(int indent, const char* const* labels, int count, int label_w, int value_w,
     const char* const* values) {
-    int j;
+    int j = 0;
 
     for (j = 0; j < count; j++) {
         char wrapped[16][MD_CELL_MAX];
         int line_count = wrap_cell_lines(values[j], value_w, wrapped, 16);
-        int r;
+        int r = 0;
 
         for (r = 0; r < line_count; r++) {
             if (r == 0) {
                 int hl = markdown_plain_width(labels[j]);
-                int pad;
+                int pad = 0;
                 write_indent(indent);
                 write_inline_markdown(labels[j], strlen(labels[j]));
                 pad = label_w - hl;
@@ -498,14 +503,14 @@ static void render_label_value_pairs(int indent, const char* const* labels, int 
 
 static int table_border_width(const int* col_width, int cols) {
     int total = cols + 1;
-    int c;
+    int c = 0;
     for (c = 0; c < cols; c++) total += col_width[c];
     return total;
 }
 
 static void draw_table_rule(int indent, const int* col_width, int cols) {
-    int c;
-    int j;
+    int c = 0;
+    int j = 0;
     if (VT()) fputs(ANSI_DIM, stdout);
     write_indent(indent);
     putchar('+');
@@ -518,10 +523,10 @@ static void draw_table_rule(int indent, const int* col_width, int cols) {
 }
 
 static void fit_table_columns(int cols, int col_width[MD_MAX_COLS], int rows,
-    char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX], int term_w) {
+    agnc_md_table_row_t* table, int term_w) {
     int budget = term_w - (cols + 1);
-    int c;
-    int i;
+    int c = 0;
+    int i = 0;
 
     if (budget < cols * 8) budget = cols * 8;
 
@@ -579,18 +584,27 @@ static void fit_table_columns(int cols, int col_width[MD_MAX_COLS], int rows,
     }
 }
 
-static void render_grid_table(int indent, char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX], int rows, int cols,
+static void render_grid_table(int indent, agnc_md_table_row_t* table, int rows, int cols,
     const int* col_width) {
-    int i;
-    int c;
+    /* ~110 KB per kolom jika di stack; pakai heap + inisialisasi pointer untuk linter. */
+    agnc_md_wrapped_col_t* wrapped = NULL;
+    int* line_counts = NULL;
+    int i = 0;
+    int c = 0;
+
+    wrapped = (agnc_md_wrapped_col_t*)calloc((size_t)MD_MAX_COLS, sizeof(agnc_md_wrapped_col_t));
+    line_counts = (int*)calloc((size_t)MD_MAX_COLS, sizeof(int));
+    if (wrapped == NULL || line_counts == NULL) {
+        free(wrapped);
+        free(line_counts);
+        return;
+    }
 
     draw_table_rule(indent, col_width, cols);
 
     for (i = 0; i < rows; i++) {
-        char wrapped[MD_MAX_COLS][16][MD_CELL_MAX];
-        int line_counts[MD_MAX_COLS];
         int row_h = 1;
-        int r;
+        int r = 0;
         int is_header = (i == 0);
 
         for (c = 0; c < cols; c++) {
@@ -609,7 +623,7 @@ static void render_grid_table(int indent, char table[MD_MAX_ROWS][MD_MAX_COLS][M
                 write_inline_markdown(cell_line, strlen(cell_line));
                 if (VT() && is_header) fputs(ANSI_RESET, stdout);
                 if (pad > 0) {
-                    int p;
+                    int p = 0;
                     for (p = 0; p < pad; p++) putchar(' ');
                 }
                 putchar(' ');
@@ -620,6 +634,9 @@ static void render_grid_table(int indent, char table[MD_MAX_ROWS][MD_MAX_COLS][M
 
         if (i == 0 || i < rows - 1) draw_table_rule(indent, col_width, cols);
     }
+
+    free(wrapped);
+    free(line_counts);
 }
 
 static int extract_comparison_labels(char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX], int rows, int cols,
@@ -627,7 +644,7 @@ static int extract_comparison_labels(char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CEL
     int count = 0;
     int non_empty = 0;
     int data_has_aspect = 0;
-    int j;
+    int j = 0;
 
     for (j = 0; j < cols; j++) {
         if (table[0][j][0] != '\0') non_empty++;
@@ -673,14 +690,14 @@ static int extract_comparison_labels(char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CEL
 /* Tabel 3+ kolom: kartu per aspek (kolom 0 = label, sisanya = nilai) */
 static void render_comparison_table(int indent, char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX], int rows, int cols,
     int term_w) {
-    const char* labels[MD_MAX_COLS];
-    const char* values[MD_MAX_COLS];
-    int label_count;
-    int value_start;
-    int label_w;
-    int value_w;
-    int i;
-    int j;
+    const char* labels[MD_MAX_COLS] = {0};
+    const char* values[MD_MAX_COLS] = {0};
+    int label_count = 0;
+    int value_start = 0;
+    int label_w = 0;
+    int value_w = 0;
+    int i = 0;
+    int j = 0;
 
     label_count = extract_comparison_labels(table, rows, cols, labels);
     if (label_count <= 0) return;
@@ -714,11 +731,11 @@ static void render_comparison_table(int indent, char table[MD_MAX_ROWS][MD_MAX_C
 /* Tabel 2 kolom perbandingan: header = nama produk, baris = pasangan nilai */
 static void render_two_column_comparison(int indent, char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX], int rows,
     int term_w) {
-    const char* labels[2];
-    const char* values[2];
-    int label_w;
-    int value_w;
-    int i;
+    const char* labels[2] = {0};
+    const char* values[2] = {0};
+    int label_w = 0;
+    int value_w = 0;
+    int i = 0;
 
     labels[0] = table[0][0];
     labels[1] = table[0][1];
@@ -737,14 +754,18 @@ static void render_two_column_comparison(int indent, char table[MD_MAX_ROWS][MD_
 }
 
 static void render_table_block(const char* const* lines, int line_count, int indent) {
-    char table[MD_MAX_ROWS][MD_MAX_COLS][MD_CELL_MAX];
+    /* Satu baris tabel ~110 KB di stack; simpan semua baris di heap. */
+    agnc_md_table_row_t* table = NULL;
     int rows = 0;
     int cols = 0;
-    int col_width[MD_MAX_COLS];
-    int term_w;
-    int i;
+    int col_width[MD_MAX_COLS] = {0};
+    int term_w = 0;
+    int i = 0;
 
-    memset(table, 0, sizeof(table));
+    table = (agnc_md_table_row_t*)calloc((size_t)MD_MAX_ROWS, sizeof(agnc_md_table_row_t));
+    if (table == NULL) {
+        return;
+    }
 
     for (i = 0; i < line_count && rows < MD_MAX_ROWS; i++) {
         int row_cols = 0;
@@ -753,7 +774,10 @@ static void render_table_block(const char* const* lines, int line_count, int ind
         if (row_cols > cols) cols = row_cols;
         rows++;
     }
-    if (rows == 0 || cols == 0) return;
+    if (rows == 0 || cols == 0) {
+        free(table);
+        return;
+    }
 
     term_w = agnc_terminal_width() - indent;
     if (term_w < 40) term_w = 40;
@@ -765,6 +789,7 @@ static void render_table_block(const char* const* lines, int line_count, int ind
      */
     fit_table_columns(cols, col_width, rows, table, term_w);
     render_grid_table(indent, table, rows, cols, col_width);
+    free(table);
 }
 
 static void render_prefixed_line(const char* time_prefix, int* first_line, int paragraph_continue, int continuation_indent,
@@ -781,7 +806,7 @@ static void render_prefixed_line(const char* time_prefix, int* first_line, int p
 
 static void render_tree_block(const char* const* lines, int line_count, const char* time_prefix, int* first_line,
     int continuation_indent) {
-    int i;
+    int i = 0;
     for (i = 0; i < line_count; i++) {
         if (*first_line) {
             if (time_prefix && time_prefix[0] != '\0') printf("%s - ", time_prefix);
@@ -798,7 +823,7 @@ static void render_tree_block(const char* const* lines, int line_count, const ch
 
 static void render_preformatted_block(const char* const* lines, int line_count, const char* time_prefix, int* first_line,
     int continuation_indent) {
-    int i;
+    int i = 0;
     if (VT()) fputs(ANSI_CYAN, stdout);
     for (i = 0; i < line_count; i++) {
         if (*first_line) {
@@ -814,18 +839,19 @@ static void render_preformatted_block(const char* const* lines, int line_count, 
 }
 
 void agnc_markdown_render_body(const char* text, const char* time_prefix, int continuation_indent) {
-    const char* cursor;
+    const char* cursor = NULL;
     int first_line = 1;
     int paragraph_continue = 0;
 
     if (!text) return;
     cursor = text;
 
-    /* State machine per baris: fence, tabel, box-drawing, atau inline markdown. */
+    /* State machine per baris: fence, tabel, box-drawing, atau inline markdown.
+     * Blok multi-baris memakai calloc (bukan array stack besar) untuk MSVC C6262. */
     while (cursor && *cursor) {
         const char* line_end = strchr(cursor, '\n');
         size_t line_len = line_end ? (size_t)(line_end - cursor) : strlen(cursor);
-        char line[MD_LINE_MAX];
+        char line[MD_LINE_MAX] = {0};
 
         if (line_len >= sizeof(line)) line_len = sizeof(line) - 1;
         memcpy(line, cursor, line_len);
@@ -833,9 +859,17 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
 
         if (is_fence_marker(line)) {
             const char* block_end = line_end ? line_end + 1 : cursor + line_len;
-            char block_lines[128][MD_LINE_MAX];
+            agnc_md_line_buf_t* block_lines = NULL;
+            const char* block_ptrs[128] = {0};
             int block_count = 0;
             int use_tree_renderer = is_tree_fence_open(line);
+            int bi = 0;
+
+            block_lines = (agnc_md_line_buf_t*)calloc(128, sizeof(agnc_md_line_buf_t));
+            if (block_lines == NULL) {
+                cursor = line_end ? line_end + 1 : cursor + line_len;
+                continue;
+            }
 
             while (block_end && *block_end && block_count < 128) {
                 const char* next_end = strchr(block_end, '\n');
@@ -847,16 +881,13 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
                 block_count++;
                 block_end = next_end ? next_end + 1 : block_end + blen;
             }
-            {
-                const char* block_ptrs[128];
-                int i;
-                for (i = 0; i < block_count; i++) block_ptrs[i] = block_lines[i];
-                if (use_tree_renderer) {
-                    render_tree_block(block_ptrs, block_count, time_prefix, &first_line, continuation_indent);
-                } else {
-                    render_preformatted_block(block_ptrs, block_count, time_prefix, &first_line, continuation_indent);
-                }
+            for (bi = 0; bi < block_count; bi++) block_ptrs[bi] = block_lines[bi];
+            if (use_tree_renderer) {
+                render_tree_block(block_ptrs, block_count, time_prefix, &first_line, continuation_indent);
+            } else {
+                render_preformatted_block(block_ptrs, block_count, time_prefix, &first_line, continuation_indent);
             }
+            free(block_lines);
             paragraph_continue = 0;
             cursor = block_end;
             while (cursor && *cursor && *cursor != '\n') cursor++;
@@ -866,9 +897,14 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
 
         if (is_table_row_line(line) || is_table_separator_line(line)) {
             const char* block_end = cursor;
-            char block_lines[MD_MAX_ROWS][MD_LINE_MAX];
-            const char* block_ptrs[MD_MAX_ROWS];
+            agnc_md_line_buf_t* block_lines = NULL;
+            const char* block_ptrs[MD_MAX_ROWS] = {0};
             int block_count = 0;
+
+            block_lines = (agnc_md_line_buf_t*)calloc((size_t)MD_MAX_ROWS, sizeof(agnc_md_line_buf_t));
+            if (block_lines == NULL) {
+                continue;
+            }
 
             while (block_end && *block_end && block_count < MD_MAX_ROWS) {
                 const char* next_end = strchr(block_end, '\n');
@@ -886,6 +922,7 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
 
             render_table_block(block_ptrs, block_count, 0);
             putchar('\n');
+            free(block_lines);
             paragraph_continue = 0;
             cursor = block_end;
             continue;
@@ -893,9 +930,14 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
 
         if (is_box_drawing_line(line)) {
             const char* block_end = cursor;
-            char block_lines[96][MD_LINE_MAX];
-            const char* block_ptrs[96];
+            agnc_md_line_buf_t* block_lines = NULL;
+            const char* block_ptrs[96] = {0};
             int block_count = 0;
+
+            block_lines = (agnc_md_line_buf_t*)calloc(96, sizeof(agnc_md_line_buf_t));
+            if (block_lines == NULL) {
+                continue;
+            }
 
             while (block_end && *block_end && block_count < 96) {
                 const char* next_end = strchr(block_end, '\n');
@@ -910,6 +952,7 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
                 block_end = next_end ? next_end + 1 : block_end + blen;
             }
             render_preformatted_block(block_ptrs, block_count, time_prefix, &first_line, continuation_indent);
+            free(block_lines);
             paragraph_continue = 0;
             cursor = block_end;
             continue;

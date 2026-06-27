@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
+# Auto-detect vcpkg toolchain sebelum project() — wajib untuk Open Folder VS (yyjson).
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Vcpkg.cmake)
+
 project(agnc VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
@@ -46,7 +49,8 @@ agnc_set_compiler_warnings(agnc)
 agnc_link_dependencies(agnc)
 
 if(WIN32)
-    target_compile_definitions(agnc PRIVATE AGNC_PLATFORM_WINDOWS=1)
+    # AGNC_BUILDING: aktifkan AGNC_API dllexport di args.c (simbol CLI publik).
+    target_compile_definitions(agnc PRIVATE AGNC_BUILDING AGNC_PLATFORM_WINDOWS=1)
 elseif(APPLE)
     target_compile_definitions(agnc PRIVATE AGNC_PLATFORM_MACOS=1)
 else()

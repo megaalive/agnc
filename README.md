@@ -11,7 +11,7 @@ CLI coding-agent pengganti OpenClaude, ditulis dalam C.
 
 Binary: `out/build/x64-Debug/agnc.exe`
 
-Panduan lengkap: [docs/visual-studio-2026.md](docs/visual-studio-2026.md)
+Panduan lengkap (termasuk troubleshooting yyjson, analyzer MSVC, IntelliSense): [docs/visual-studio-2026.md](docs/visual-studio-2026.md)
 
 ## Build (Windows)
 

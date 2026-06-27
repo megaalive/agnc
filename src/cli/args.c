@@ -2,10 +2,12 @@
  * args.c
  *
  * Parser argumen CLI dan subcommand dasar (--version, --help, --print).
- * Flag --no-tools dan --yes bisa muncul sebelum atau sesudah --print.
+ * Implementasi diekspor sebagai agnc_cli_*_impl; pemanggil memakai wrapper
+ * static inline di include/agnc/cli.h (menghindari saran static IntelliSense VCR003).
  */
 
 #include "agnc/cli.h"
+#include "agnc/export.h"
 #include "agnc/version.h"
 
 #include <stdio.h>
@@ -21,7 +23,8 @@ static char *agnc_strdup_local(const char *value)
 #endif
 }
 
-void agnc_cli_options_free(agnc_cli_options_t *options)
+/* Bebaskan memori hasil agnc_cli_parse (--print prompt, dll.). */
+AGNC_API void agnc_cli_options_free_impl(agnc_cli_options_t *options)
 {
     if (options == NULL) {
         return;
@@ -31,7 +34,8 @@ void agnc_cli_options_free(agnc_cli_options_t *options)
     options->print_prompt = NULL;
 }
 
-agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
+/* Parse argv ke agnc_cli_options_t; default ke --help jika tidak ada subcommand. */
+AGNC_API agnc_status_t agnc_cli_parse_impl(int argc, char **argv, agnc_cli_options_t *options)
 {
     int index;
 
@@ -107,13 +111,14 @@ agnc_status_t agnc_cli_parse(int argc, char **argv, agnc_cli_options_t *options)
     return AGNC_STATUS_OK;
 }
 
-int agnc_cli_run_version(void)
+AGNC_API int agnc_cli_run_version_impl(void)
 {
     printf("agnc %s\n", AGNC_VERSION_STRING);
     return 0;
 }
 
-int agnc_cli_run_help(void)
+/* Tampilkan usage singkat ke stdout. */
+AGNC_API int agnc_cli_run_help_impl(void)
 {
     printf("agnc - OpenClaude-compatible coding agent CLI (C)\n\n");
     printf("Usage:\n");

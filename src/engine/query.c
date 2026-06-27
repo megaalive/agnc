@@ -52,11 +52,19 @@ static void agnc_message_list_clear(agnc_message_list_t *list)
     size_t index;
 
     for (index = 0; index < list->count; index++) {
-        free(list->items[index].role);
-        free(list->items[index].content);
-        free(list->items[index].tool_call_id);
-        free(list->items[index].tool_name);
-        free(list->items[index].tool_arguments);
+        agnc_chat_message_t *item = &list->items[index];
+
+        free(item->role);
+        free(item->content);
+        free(item->tool_call_id);
+        free(item->tool_name);
+        free(item->tool_arguments);
+        /* Null setelah free: hilangkan peringatan C6001 saat reuse slot message list. */
+        item->role = NULL;
+        item->content = NULL;
+        item->tool_call_id = NULL;
+        item->tool_name = NULL;
+        item->tool_arguments = NULL;
     }
 
     list->count = 0;
@@ -512,9 +520,10 @@ static agnc_status_t agnc_run_provider_turn(
     return status;
 }
 
+/* Deteksi prompt pencarian kode agar tool shell dinonaktifkan (model pakai grep, bukan findstr). */
 static int agnc_query_prompt_is_search(const char *prompt)
 {
-    char lower[512];
+    char lower[512] = {0}; /* Inisialisasi eksplisit: linter lnt-uninitialized-local. */
     size_t index;
     size_t length;
 
