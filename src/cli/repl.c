@@ -15,6 +15,7 @@
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/session.h"
+#include "agnc/hooks.h"
 #include "agnc/skills.h"
 #include "agnc/tool.h"
 #include "agnc/tool_cache.h"
@@ -119,6 +120,8 @@ static void agnc_repl_print_help(void)
     printf("  /session delete <nama>  Hapus file sesi dari disk\n");
     printf("  /doctor            Jalankan health check\n");
     printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
+    printf("  /hooks             Daftar hook per event (config hooks.*)\n");
+    printf("  /usage             Token usage sesi + turn terakhir\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nWorkspace dan config agnc:\n");
     printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
@@ -257,15 +260,38 @@ static void agnc_repl_print_mcp_status(const agnc_config_t *config, agnc_mcp_ses
     }
 }
 
-static void agnc_repl_print_usage_summary(long prompt_tokens, long completion_tokens, long total_tokens)
+static void agnc_repl_print_usage_summary(
+    const agnc_session_usage_t *session_usage,
+    long prompt_tokens,
+    long completion_tokens,
+    long total_tokens)
 {
-    char detail[128];
+    char detail[160];
 
     if (prompt_tokens < 0 && completion_tokens < 0 && total_tokens < 0) {
         return;
     }
 
-    if (total_tokens >= 0) {
+    if (session_usage != NULL && session_usage->total_tokens > 0) {
+        if (total_tokens >= 0) {
+            snprintf(
+                detail,
+                sizeof(detail),
+                "token: turn %ld · sesi %ld",
+                total_tokens,
+                session_usage->total_tokens);
+        } else if (prompt_tokens >= 0 && completion_tokens >= 0) {
+            snprintf(
+                detail,
+                sizeof(detail),
+                "token: turn prompt %ld · completion %ld · sesi %ld",
+                prompt_tokens,
+                completion_tokens,
+                session_usage->total_tokens);
+        } else {
+            snprintf(detail, sizeof(detail), "token: sesi %ld", session_usage->total_tokens);
+        }
+    } else if (total_tokens >= 0) {
         snprintf(detail, sizeof(detail), "token: total %ld", total_tokens);
     } else if (prompt_tokens >= 0 && completion_tokens >= 0) {
         snprintf(detail, sizeof(detail), "token: prompt %ld · completion %ld", prompt_tokens, completion_tokens);
@@ -278,6 +304,52 @@ static void agnc_repl_print_usage_summary(long prompt_tokens, long completion_to
     }
 
     agnc_console_print_chat_system(detail);
+}
+
+static void agnc_repl_print_usage_detail(
+    const char *active_session_name,
+    const agnc_session_usage_t *session_usage,
+    long last_prompt,
+    long last_completion,
+    long last_total)
+{
+    const char *name = active_session_name != NULL ? active_session_name : "?";
+
+    printf("Token usage — sesi \"%s\":\n", name);
+    if (session_usage != NULL) {
+        printf(
+            "  sesi: prompt %ld · completion %ld · total %ld\n",
+            session_usage->prompt_tokens,
+            session_usage->completion_tokens,
+            session_usage->total_tokens);
+    }
+
+    if (last_prompt < 0 && last_completion < 0 && last_total < 0) {
+        printf("  turn terakhir: (belum ada data provider)\n");
+        return;
+    }
+
+    if (last_total >= 0) {
+        printf("  turn terakhir: total %ld\n", last_total);
+    } else {
+        printf(
+            "  turn terakhir: prompt %ld · completion %ld\n",
+            last_prompt >= 0 ? last_prompt : 0,
+            last_completion >= 0 ? last_completion : 0);
+    }
+}
+
+static void agnc_repl_usage_reload(agnc_session_usage_t *session_usage, const char *session_path)
+{
+    if (session_usage == NULL) {
+        return;
+    }
+
+    if (session_path != NULL) {
+        (void)agnc_session_usage_load(session_path, session_usage);
+    } else {
+        agnc_session_usage_init(session_usage);
+    }
 }
 
 static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
@@ -365,6 +437,7 @@ static agnc_status_t agnc_repl_switch_session(
     char **active_session_name,
     agnc_config_t *config,
     agnc_conversation_t *conversation,
+    agnc_session_usage_t *session_usage,
     int force_empty,
     int skip_save)
 {
@@ -409,6 +482,7 @@ static agnc_status_t agnc_repl_switch_session(
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
+    agnc_repl_usage_reload(session_usage, new_path);
     return agnc_session_active_name_save(name);
 }
 
@@ -417,7 +491,8 @@ static agnc_status_t agnc_repl_delete_session(
     char **session_path,
     char **active_session_name,
     agnc_config_t *config,
-    agnc_conversation_t *conversation)
+    agnc_conversation_t *conversation,
+    agnc_session_usage_t *session_usage)
 {
     char *path = NULL;
     int is_active;
@@ -437,7 +512,7 @@ static agnc_status_t agnc_repl_delete_session(
     is_active = *active_session_name != NULL && strcmp(*active_session_name, name) == 0;
     if (is_active) {
         status = agnc_repl_switch_session(
-            "current", session_path, active_session_name, config, conversation, 1, 1);
+            "current", session_path, active_session_name, config, conversation, session_usage, 1, 1);
         if (status != AGNC_STATUS_OK) {
             return status;
         }
@@ -481,13 +556,56 @@ static void agnc_repl_print_skills(const agnc_config_t *config, int reloaded)
     agnc_skills_list_free(entries, count);
 }
 
+static void agnc_repl_print_hooks(const agnc_config_t *config)
+{
+    size_t event_index;
+
+    if (config == NULL || !config->hooks_enabled) {
+        agnc_console_print_chat_system("hooks: nonaktif di config");
+        return;
+    }
+
+    printf("Hooks (env: AGNC_HOOK_EVENT, AGNC_HOOK_PAYLOAD_FILE):\n");
+    for (event_index = 0; event_index < (size_t)AGNC_HOOK_EVENT_COUNT; event_index++) {
+        size_t count = agnc_hooks_count_for_event(config, (agnc_hook_event_id_t)event_index);
+        size_t cmd_index;
+
+        printf("  %s (%zu):\n", agnc_hooks_event_name((agnc_hook_event_id_t)event_index), count);
+        if (event_index == AGNC_HOOK_EVENT_SESSION_START) {
+            for (cmd_index = 0; cmd_index < config->hooks_session_start_count; cmd_index++) {
+                printf("    %s\n", config->hooks_session_start[cmd_index]);
+            }
+        } else if (event_index == AGNC_HOOK_EVENT_PRE_TURN) {
+            for (cmd_index = 0; cmd_index < config->hooks_pre_turn_count; cmd_index++) {
+                printf("    %s\n", config->hooks_pre_turn[cmd_index]);
+            }
+        } else if (event_index == AGNC_HOOK_EVENT_POST_TURN) {
+            for (cmd_index = 0; cmd_index < config->hooks_post_turn_count; cmd_index++) {
+                printf("    %s\n", config->hooks_post_turn[cmd_index]);
+            }
+        } else if (event_index == AGNC_HOOK_EVENT_PRE_TOOL) {
+            for (cmd_index = 0; cmd_index < config->hooks_pre_tool_count; cmd_index++) {
+                printf("    %s\n", config->hooks_pre_tool[cmd_index]);
+            }
+        } else if (event_index == AGNC_HOOK_EVENT_POST_TOOL) {
+            for (cmd_index = 0; cmd_index < config->hooks_post_tool_count; cmd_index++) {
+                printf("    %s\n", config->hooks_post_tool[cmd_index]);
+            }
+        }
+    }
+}
+
 static int agnc_repl_handle_slash(
     char *line,
     agnc_config_t *config,
     agnc_conversation_t *conversation,
     char **session_path,
     char **active_session_name,
-    agnc_mcp_session_t *mcp_session)
+    agnc_mcp_session_t *mcp_session,
+    agnc_session_usage_t *session_usage,
+    long *last_usage_prompt,
+    long *last_usage_completion,
+    long *last_usage_total)
 {
     const char *arg;
     char *space;
@@ -501,6 +619,18 @@ static int agnc_repl_handle_slash(
         agnc_conversation_clear(conversation);
         if (*session_path != NULL) {
             (void)agnc_session_clear_messages(*session_path, config);
+        }
+        if (session_usage != NULL) {
+            agnc_session_usage_init(session_usage);
+        }
+        if (last_usage_prompt != NULL) {
+            *last_usage_prompt = -1;
+        }
+        if (last_usage_completion != NULL) {
+            *last_usage_completion = -1;
+        }
+        if (last_usage_total != NULL) {
+            *last_usage_total = -1;
         }
         agnc_console_print_chat_system("riwayat dihapus");
         return 1;
@@ -655,7 +785,7 @@ static int agnc_repl_handle_slash(
             }
 
             delete_status = agnc_repl_delete_session(
-                delete_name, session_path, active_session_name, config, conversation);
+                delete_name, session_path, active_session_name, config, conversation, session_usage);
             if (delete_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session delete gagal");
                 fprintf(stderr, "agnc: %s\n", agnc_status_to_string(delete_status));
@@ -680,11 +810,20 @@ static int agnc_repl_handle_slash(
             }
 
             switch_status = agnc_repl_switch_session(
-                new_name, session_path, active_session_name, config, conversation, 1, 0);
+                new_name, session_path, active_session_name, config, conversation, session_usage, 1, 0);
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session new gagal");
                 fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
             } else {
+                if (last_usage_prompt != NULL) {
+                    *last_usage_prompt = -1;
+                }
+                if (last_usage_completion != NULL) {
+                    *last_usage_completion = -1;
+                }
+                if (last_usage_total != NULL) {
+                    *last_usage_total = -1;
+                }
                 char detail[80];
                 snprintf(detail, sizeof(detail), "sesi baru: %s", new_name);
                 agnc_console_print_chat_system(detail);
@@ -694,12 +833,21 @@ static int agnc_repl_handle_slash(
 
         {
             agnc_status_t switch_status = agnc_repl_switch_session(
-                arg, session_path, active_session_name, config, conversation, 0, 0);
+                arg, session_path, active_session_name, config, conversation, session_usage, 0, 0);
 
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session gagal");
                 fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
             } else {
+                if (last_usage_prompt != NULL) {
+                    *last_usage_prompt = -1;
+                }
+                if (last_usage_completion != NULL) {
+                    *last_usage_completion = -1;
+                }
+                if (last_usage_total != NULL) {
+                    *last_usage_total = -1;
+                }
                 char detail[80];
                 snprintf(detail, sizeof(detail), "sesi aktif: %s", arg);
                 agnc_console_print_chat_system(detail);
@@ -719,6 +867,21 @@ static int agnc_repl_handle_slash(
         } else {
             agnc_repl_print_skills(config, 0);
         }
+        return 1;
+    }
+
+    if (strncmp(line, "/hooks", 6) == 0) {
+        agnc_repl_print_hooks(config);
+        return 1;
+    }
+
+    if (strncmp(line, "/usage", 6) == 0) {
+        agnc_repl_print_usage_detail(
+            *active_session_name,
+            session_usage,
+            last_usage_prompt != NULL ? *last_usage_prompt : -1,
+            last_usage_completion != NULL ? *last_usage_completion : -1,
+            last_usage_total != NULL ? *last_usage_total : -1);
         return 1;
     }
 
@@ -747,12 +910,16 @@ int agnc_cli_run_interactive(void)
     agnc_conversation_t conversation;
     agnc_mcp_session_t mcp_session;
     agnc_query_options_t options;
+    agnc_session_usage_t session_usage;
     char *session_path = NULL;
     char *active_session_name = NULL;
     char line[AGNC_REPL_LINE_MAX];
     long usage_prompt = -1;
     long usage_completion = -1;
     long usage_total = -1;
+    long last_usage_prompt = -1;
+    long last_usage_completion = -1;
+    long last_usage_total = -1;
     agnc_status_t status;
     int exit_code = 0;
 
@@ -794,6 +961,24 @@ int agnc_cli_run_interactive(void)
         }
     }
 
+    agnc_session_usage_init(&session_usage);
+    agnc_repl_usage_reload(&session_usage, session_path);
+
+    if (config.hooks_enabled) {
+        agnc_hook_payload_input_t hook_input;
+        char *payload_json;
+
+        memset(&hook_input, 0, sizeof(hook_input));
+        hook_input.session_name = active_session_name;
+        hook_input.provider_id = config.provider_id;
+        hook_input.model = config.model;
+        payload_json = agnc_hooks_build_payload_json(AGNC_HOOK_EVENT_SESSION_START, &hook_input);
+        if (payload_json != NULL) {
+            (void)agnc_hooks_run(&config, AGNC_HOOK_EVENT_SESSION_START, payload_json, NULL);
+            agnc_hooks_free_payload(payload_json);
+        }
+    }
+
     agnc_repl_install_cancel_handler();
     printf(">\n");
     fflush(stdout);
@@ -806,6 +991,7 @@ int agnc_cli_run_interactive(void)
     options.usage_prompt_tokens = &usage_prompt;
     options.usage_completion_tokens = &usage_completion;
     options.usage_total_tokens = &usage_total;
+    options.session_name = active_session_name;
 
     for (;;) {
         if (!agnc_repl_read_line(line, sizeof(line))) {
@@ -821,7 +1007,16 @@ int agnc_cli_run_interactive(void)
             agnc_console_clear_input_line();
             {
                 int slash_result = agnc_repl_handle_slash(
-                    line, &config, &conversation, &session_path, &active_session_name, &mcp_session);
+                    line,
+                    &config,
+                    &conversation,
+                    &session_path,
+                    &active_session_name,
+                    &mcp_session,
+                    &session_usage,
+                    &last_usage_prompt,
+                    &last_usage_completion,
+                    &last_usage_total);
                 if (slash_result == 2) {
                     break;
                 }
@@ -850,7 +1045,15 @@ int agnc_cli_run_interactive(void)
         }
 
         if (status == AGNC_STATUS_OK) {
-            agnc_repl_print_usage_summary(usage_prompt, usage_completion, usage_total);
+            last_usage_prompt = usage_prompt;
+            last_usage_completion = usage_completion;
+            last_usage_total = usage_total;
+            if (session_path != NULL) {
+                (void)agnc_session_usage_accumulate(
+                    session_path, usage_prompt, usage_completion, usage_total);
+                agnc_repl_usage_reload(&session_usage, session_path);
+            }
+            agnc_repl_print_usage_summary(&session_usage, usage_prompt, usage_completion, usage_total);
         }
 
         if (session_path != NULL) {

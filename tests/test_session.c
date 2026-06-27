@@ -482,6 +482,43 @@ static void test_session_sync_append(void **state)
     remove(g_session_path);
 }
 
+static void test_session_usage_accumulate(void **state)
+{
+    agnc_session_usage_t usage;
+    agnc_status_t status;
+
+    (void)state;
+
+    remove(g_session_path);
+    agnc_session_usage_init(&usage);
+
+    status = agnc_session_usage_accumulate(g_session_path, 100, 50, 150);
+    assert_int_equal(status, AGNC_STATUS_OK);
+
+    status = agnc_session_usage_load(g_session_path, &usage);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(usage.prompt_tokens, 100);
+    assert_int_equal(usage.completion_tokens, 50);
+    assert_int_equal(usage.total_tokens, 150);
+
+    status = agnc_session_usage_accumulate(g_session_path, 20, 30, -1);
+    assert_int_equal(status, AGNC_STATUS_OK);
+
+    status = agnc_session_usage_load(g_session_path, &usage);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(usage.prompt_tokens, 120);
+    assert_int_equal(usage.completion_tokens, 80);
+    assert_int_equal(usage.total_tokens, 200);
+
+    status = agnc_session_usage_reset(g_session_path);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    status = agnc_session_usage_load(g_session_path, &usage);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(usage.prompt_tokens, 0);
+    assert_int_equal(usage.completion_tokens, 0);
+    assert_int_equal(usage.total_tokens, 0);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -497,6 +534,7 @@ int main(void)
         cmocka_unit_test(test_session_delete_by_name),
         cmocka_unit_test(test_session_migrate_json),
         cmocka_unit_test_setup_teardown(test_session_sync_append, setup_session_path, teardown_session_path),
+        cmocka_unit_test_setup_teardown(test_session_usage_accumulate, setup_session_path, teardown_session_path),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

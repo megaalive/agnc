@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.13+) | Sub-agent, OAuth, gRPC, hooks, TUI | backlog |
+| **6. Fitur besar** (Fase 6.15+) | Sub-agent, OAuth, gRPC, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -968,6 +968,38 @@ Status: **selesai** (Windows-first, 2026-06).
 - Load `*.md` dan `*/SKILL.md` dari `~/.agnc/skills` + `.agnc/skills` (config `skills.paths`).
 - Konteks skills di-inject ke system prompt (max 16 KB); cache per sesi REPL.
 - REPL: `/skills`, `/skills reload`; doctor menampilkan jumlah skill file.
+
+### 11.19 Fase 6.13 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Meta `usage_*_total` di SQLite sesi; akumulasi setiap turn REPL sukses.
+- REPL: `/usage`, baris turn menampilkan total sesi; `/clear` reset usage.
+- `--print` mencetak usage turn ke stderr jika provider mengirim data.
+
+### 11.20 Fase 6.14 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Config `hooks.{session_start,pre_turn,post_turn,pre_tool,post_tool}` — array perintah shell.
+- Payload JSON via `AGNC_HOOK_PAYLOAD_FILE`; `pre_tool` exit ≠ 0 memblokir tool.
+- REPL: `/hooks`, `session_start` saat startup; doctor menghitung perintah hook.
+
+### 12.10 Urutan kerja Fase 6.14 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.14.1** | Modul `hooks.c` + config | **Selesai** |
+| **6.14.2** | Integrasi query/REPL/doctor | **Selesai** |
+| **6.14.3** | Test + docs | **Selesai** |
+
+### 12.9 Urutan kerja Fase 6.13 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.13.1** | API `session_usage_*` + meta SQLite | **Selesai** |
+| **6.13.2** | REPL persist + `/usage`; print stderr | **Selesai** |
+| **6.13.3** | Test + docs | **Selesai** |
 
 ### 12.8 Urutan kerja Fase 6.12 (dikunci 2026-06)
 
@@ -1146,7 +1178,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.13+** sebelum **6.12** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.15+** sebelum **6.14** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1241,7 +1273,21 @@ Tasks:
 - Loader markdown skills + config `skills.paths`. — `skills.c`, `config.c`
 - Inject ke system prompt; `/skills` di REPL. — `query.c`, `repl.c`
 
-#### Fase 6.13+ — Backlog fitur besar
+#### Fase 6.13 — Token usage persist — **selesai**
+
+Tasks:
+
+- Meta usage di SQLite sesi + API accumulate. — `session.c`
+- REPL `/usage`, persist per turn; `--print` stderr. — `repl.c`, `print.c`
+
+#### Fase 6.14 — Hooks (ringan) — **selesai**
+
+Tasks:
+
+- Config `hooks.*` + runner shell + payload JSON. — `hooks.c`, `config.c`
+- Integrasi pre/post turn & pre/post tool; `/hooks` REPL. — `query.c`, `repl.c`
+
+#### Fase 6.15+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

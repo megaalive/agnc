@@ -36,6 +36,7 @@ add_executable(agnc
     src/engine/query.c
     src/engine/session.c
     src/engine/skills.c
+    src/engine/hooks.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c
@@ -204,6 +205,21 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_skills)
 
     add_test(NAME test_skills COMMAND test_skills)
+
+    add_executable(test_hooks
+        tests/test_hooks.c
+        src/engine/hooks.c
+        src/util/path.c
+    )
+
+    target_include_directories(test_hooks PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_hooks PRIVATE yyjson::yyjson cmocka::cmocka)
+    agnc_set_compiler_warnings(test_hooks)
+
+    add_test(NAME test_hooks COMMAND test_hooks)
 
     add_executable(test_provider_registry
         tests/test_provider_registry.c

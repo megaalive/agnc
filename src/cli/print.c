@@ -58,9 +58,32 @@ int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve)
 
     {
         agnc_query_options_t options;
+        long usage_prompt = -1;
+        long usage_completion = -1;
+        long usage_total = -1;
+
         memset(&options, 0, sizeof(options));
         options.auto_approve = auto_approve;
+        options.usage_prompt_tokens = &usage_prompt;
+        options.usage_completion_tokens = &usage_completion;
+        options.usage_total_tokens = &usage_total;
         status = agnc_query_print(&config, prompt, &options);
+
+        if (status == AGNC_STATUS_OK) {
+            if (usage_total >= 0) {
+                fprintf(stderr, "agnc: token: total %ld\n", usage_total);
+            } else if (usage_prompt >= 0 && usage_completion >= 0) {
+                fprintf(
+                    stderr,
+                    "agnc: token: prompt %ld · completion %ld\n",
+                    usage_prompt,
+                    usage_completion);
+            } else if (usage_prompt >= 0) {
+                fprintf(stderr, "agnc: token: prompt %ld\n", usage_prompt);
+            } else if (usage_completion >= 0) {
+                fprintf(stderr, "agnc: token: completion %ld\n", usage_completion);
+            }
+        }
     }
     agnc_config_free(&config);
 

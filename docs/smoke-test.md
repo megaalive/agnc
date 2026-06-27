@@ -68,6 +68,18 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `/skills` di REPL — daftar file; `/skills reload` setelah edit file
 - [ ] `agnc doctor` — baris `skills` menampilkan jumlah file
 
+## Token usage persist (Fase 6.13)
+
+- [ ] REPL: setelah turn sukses — `token: turn N · sesi M` (jika provider kirim usage)
+- [ ] `/usage` — total sesi + turn terakhir; `/clear` reset total sesi
+- [ ] `--print` — baris `agnc: token: ...` di stderr jika ada usage
+
+## Hooks (Fase 6.14)
+
+- [ ] Set `hooks.enabled` + `pre_turn` dengan script yang log payload — hook jalan saat chat
+- [ ] `pre_tool` dengan `exit /b 1` — tool diblokir, pesan `blocked by pre_tool hook`
+- [ ] `/hooks` dan `agnc doctor` — daftar / jumlah perintah hook
+
 ## Catatan
 
 - Test provider live (OpenRouter/Gemini) bersifat opsional; set `AGNC_TEST_LIVE_OPENROUTER=1` hanya saat regression eksplisit.

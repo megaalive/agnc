@@ -78,9 +78,11 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/
 
 **Skills:** file `.md` atau `*/SKILL.md` di `~/.agnc/skills` dan `.agnc/skills` dimuat ke system prompt. Konfigurasi `skills.enabled` / `skills.paths` di `~/.agnc.json`. REPL: `/skills`, `/skills reload`.
 
+**Hooks:** perintah shell per event (`session_start`, `pre_turn`, `post_turn`, `pre_tool`, `post_tool`) di `hooks` config. Script membaca payload JSON dari env `AGNC_HOOK_PAYLOAD_FILE`. `pre_tool` dengan exit ≠ 0 memblokir tool. REPL: `/hooks`.
+
 Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
-Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: total N`). `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
+Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: turn N · sesi M`). `/usage` menampilkan total sesi; total disimpan di meta SQLite sesi. `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
 
 ### Mode headless `--print`
 
@@ -174,4 +176,6 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.10** — cache tool, `find_symbol` (ctags), grep truncate: selesai
 - **Fase 6.11a** — agent product context (config/workspace di system prompt): selesai
 - **Fase 6.12** — skills markdown ke system prompt: selesai
-- **Fase 6.13+** — sub-agent, OAuth, gRPC, hooks, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.13** — token usage persist per sesi (`/usage`): selesai
+- **Fase 6.14** — hooks shell per event agent: selesai
+- **Fase 6.15+** — sub-agent, OAuth, gRPC, TUI: backlog (lihat `roadmap.md`)

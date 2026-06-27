@@ -21,6 +21,7 @@ typedef struct {
     long *usage_prompt_tokens;     /* Opsional: akumulasi prompt tokens seluruh turn (-1 = belum ada). */
     long *usage_completion_tokens;
     long *usage_total_tokens;
+    const char *session_name;      /* Opsional: nama sesi untuk hook payload. */
 } agnc_query_options_t;
 
 /*

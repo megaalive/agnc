@@ -11,6 +11,13 @@
 #include "agnc/conversation.h"
 #include "agnc/status.h"
 
+/* Akumulasi token usage tersimpan di meta sesi SQLite. */
+typedef struct {
+    long prompt_tokens;
+    long completion_tokens;
+    long total_tokens;
+} agnc_session_usage_t;
+
 /* Path folder sesi default (~/.agnc/sessions). */
 agnc_status_t agnc_session_default_dir(char **output);
 
@@ -69,5 +76,20 @@ agnc_status_t agnc_session_compact_storage(
     agnc_conversation_t *conversation,
     const agnc_config_t *config,
     size_t keep_tail_messages);
+
+void agnc_session_usage_init(agnc_session_usage_t *usage);
+
+agnc_status_t agnc_session_usage_load(const char *path, agnc_session_usage_t *usage_out);
+
+agnc_status_t agnc_session_usage_save(const char *path, const agnc_session_usage_t *usage);
+
+/* Tambahkan delta turn ke total sesi (nilai < 0 diabaikan). */
+agnc_status_t agnc_session_usage_accumulate(
+    const char *path,
+    long prompt_delta,
+    long completion_delta,
+    long total_delta);
+
+agnc_status_t agnc_session_usage_reset(const char *path);
 
 #endif /* AGNC_SESSION_H */

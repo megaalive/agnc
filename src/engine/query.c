@@ -10,6 +10,7 @@
 #include "agnc/net/http.h"
 #include "agnc/net/sse.h"
 #include "agnc/path.h"
+#include "agnc/hooks.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/session.h"
@@ -622,6 +623,56 @@ static void agnc_execute_tool_invalidate_cache(const char *tool_name, agnc_statu
     }
 }
 
+static void agnc_query_fill_hook_input(
+    agnc_hook_payload_input_t *input,
+    const agnc_config_t *config,
+    const agnc_query_options_t *options)
+{
+    if (input == NULL) {
+        return;
+    }
+
+    memset(input, 0, sizeof(*input));
+    if (options != NULL) {
+        input->session_name = options->session_name;
+        if (options->usage_prompt_tokens != NULL) {
+            input->usage_prompt = *options->usage_prompt_tokens;
+        }
+        if (options->usage_completion_tokens != NULL) {
+            input->usage_completion = *options->usage_completion_tokens;
+        }
+        if (options->usage_total_tokens != NULL) {
+            input->usage_total = *options->usage_total_tokens;
+        }
+    }
+
+    if (config != NULL) {
+        input->provider_id = config->provider_id;
+        input->model = config->model;
+    }
+}
+
+static void agnc_query_fire_hook(
+    const agnc_config_t *config,
+    agnc_hook_event_id_t event_id,
+    const agnc_hook_payload_input_t *input,
+    int *blocked_out)
+{
+    char *payload_json;
+
+    if (config == NULL || !config->hooks_enabled) {
+        return;
+    }
+
+    payload_json = agnc_hooks_build_payload_json(event_id, input);
+    if (payload_json == NULL) {
+        return;
+    }
+
+    (void)agnc_hooks_run(config, event_id, payload_json, blocked_out);
+    agnc_hooks_free_payload(payload_json);
+}
+
 static agnc_status_t agnc_execute_tool(
     const agnc_config_t *config,
     const char *tool_name,
@@ -1213,6 +1264,13 @@ agnc_status_t agnc_query_run(
         return status;
     }
 
+    if (user_prompt != NULL && user_prompt[0] != '\0') {
+        agnc_hook_payload_input_t hook_input;
+        agnc_query_fill_hook_input(&hook_input, config, options);
+        hook_input.user_prompt = user_prompt;
+        agnc_query_fire_hook(config, AGNC_HOOK_EVENT_PRE_TURN, &hook_input, NULL);
+    }
+
     memset(&parser, 0, sizeof(parser));
 
     if (curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK) {
@@ -1312,6 +1370,38 @@ agnc_status_t agnc_query_run(
                 goto cleanup;
             }
 
+            {
+                agnc_hook_payload_input_t hook_input;
+                int hook_blocked = 0;
+
+                agnc_query_fill_hook_input(&hook_input, config, options);
+                hook_input.tool_name = tool_call->name;
+                hook_input.tool_arguments = arguments;
+                agnc_query_fire_hook(config, AGNC_HOOK_EVENT_PRE_TOOL, &hook_input, &hook_blocked);
+                if (hook_blocked) {
+                    free(arguments);
+                    tool_result = agnc_strdup_local("error: tool blocked by pre_tool hook");
+                    status = AGNC_STATUS_TOOL_DENIED;
+                    if (tool_result == NULL) {
+                        status = AGNC_STATUS_OUT_OF_MEMORY;
+                        goto cleanup;
+                    }
+                    agnc_query_truncate_tool_result(&tool_result);
+                    status = agnc_conversation_push(
+                        conversation,
+                        "tool",
+                        tool_result,
+                        tool_id,
+                        NULL,
+                        NULL);
+                    free(tool_result);
+                    if (status != AGNC_STATUS_OK) {
+                        goto cleanup;
+                    }
+                    continue;
+                }
+            }
+
             status = agnc_execute_tool(
                 config,
                 tool_call->name,
@@ -1337,6 +1427,15 @@ agnc_status_t agnc_query_run(
 
             agnc_query_truncate_tool_result(&tool_result);
 
+            {
+                agnc_hook_payload_input_t hook_input;
+                agnc_query_fill_hook_input(&hook_input, config, options);
+                hook_input.tool_name = tool_call->name;
+                hook_input.tool_arguments = arguments;
+                hook_input.tool_status = agnc_status_to_string(status);
+                agnc_query_fire_hook(config, AGNC_HOOK_EVENT_POST_TOOL, &hook_input, NULL);
+            }
+
             status = agnc_conversation_push(
                 conversation,
                 "tool",
@@ -1356,6 +1455,13 @@ agnc_status_t agnc_query_run(
     fprintf(stderr, "agnc: max tool iterations reached\n");
 
 cleanup:
+    if (status == AGNC_STATUS_OK && user_prompt != NULL && user_prompt[0] != '\0') {
+        agnc_hook_payload_input_t hook_input;
+        agnc_query_fill_hook_input(&hook_input, config, options);
+        hook_input.user_prompt = user_prompt;
+        agnc_query_fire_hook(config, AGNC_HOOK_EVENT_POST_TURN, &hook_input, NULL);
+    }
+
     if (chat_assistant_timestamp) {
         agnc_console_spinner_stop();
     }

@@ -54,6 +54,17 @@ typedef struct {
     int skills_enabled;
     char **skills_paths;
     size_t skills_path_count;
+    int hooks_enabled;
+    char **hooks_session_start;
+    size_t hooks_session_start_count;
+    char **hooks_pre_turn;
+    size_t hooks_pre_turn_count;
+    char **hooks_post_turn;
+    size_t hooks_post_turn_count;
+    char **hooks_pre_tool;
+    size_t hooks_pre_tool_count;
+    char **hooks_post_tool;
+    size_t hooks_post_tool_count;
     agnc_mcp_server_config_t *mcp_servers;
     size_t mcp_server_count;
 } agnc_config_t;

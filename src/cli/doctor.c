@@ -16,6 +16,7 @@
 #include "agnc/status.h"
 #include "agnc/tool_path.h"
 #include "agnc/skills.h"
+#include "agnc/hooks.h"
 #include "agnc/version.h"
 
 #include <curl/curl.h>
@@ -182,6 +183,20 @@ int agnc_cli_run_doctor(void)
                 } else {
                     agnc_doctor_print_status("skills", "error", "cannot scan skill folders");
                 }
+            }
+
+            if (!config.hooks_enabled) {
+                agnc_doctor_print_status("hooks", "skipped", "disabled in config");
+            } else {
+                size_t hook_total = 0;
+                size_t event_index;
+
+                for (event_index = 0; event_index < (size_t)AGNC_HOOK_EVENT_COUNT; event_index++) {
+                    hook_total += agnc_hooks_count_for_event(&config, (agnc_hook_event_id_t)event_index);
+                }
+
+                snprintf(detail, sizeof(detail), "%zu command(s) across %d events", hook_total, AGNC_HOOK_EVENT_COUNT);
+                agnc_doctor_print_status("hooks", hook_total > 0 ? "ok" : "missing", detail);
             }
 
             if (config.mcp_server_count > 0) {

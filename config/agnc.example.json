@@ -75,6 +75,14 @@
     "enabled": true,
     "paths": ["~/.agnc/skills", ".agnc/skills"]
   },
+  "hooks": {
+    "enabled": false,
+    "session_start": [],
+    "pre_turn": [],
+    "post_turn": [],
+    "pre_tool": [],
+    "post_tool": []
+  },
   "runtime": {
     "max_tool_iterations": 25,
     "stream": true,

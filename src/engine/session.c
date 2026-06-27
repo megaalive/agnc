@@ -1562,6 +1562,14 @@ agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t 
         return AGNC_STATUS_IO_ERROR;
     }
 
+    if (agnc_session_sqlite_meta_set(db, "usage_prompt_total", "0") != AGNC_STATUS_OK ||
+        agnc_session_sqlite_meta_set(db, "usage_completion_total", "0") != AGNC_STATUS_OK ||
+        agnc_session_sqlite_meta_set(db, "usage_total", "0") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
     status = agnc_session_sqlite_update_meta(db, config, NULL);
     if (status != AGNC_STATUS_OK ||
         agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
@@ -1678,4 +1686,193 @@ agnc_status_t agnc_session_save(
     }
 
     return agnc_session_sync(path, (agnc_conversation_t *)conversation, config);
+}
+
+void agnc_session_usage_init(agnc_session_usage_t *usage)
+{
+    if (usage == NULL) {
+        return;
+    }
+
+    usage->prompt_tokens = 0;
+    usage->completion_tokens = 0;
+    usage->total_tokens = 0;
+}
+
+static long agnc_session_parse_meta_long(const char *text, long default_value)
+{
+    char *end = NULL;
+    long value;
+
+    if (text == NULL || text[0] == '\0') {
+        return default_value;
+    }
+
+    value = strtol(text, &end, 10);
+    if (end == text) {
+        return default_value;
+    }
+
+    return value;
+}
+
+static agnc_status_t agnc_session_usage_load_db(sqlite3 *db, agnc_session_usage_t *usage_out)
+{
+    char *prompt_text = NULL;
+    char *completion_text = NULL;
+    char *total_text = NULL;
+
+    if (db == NULL || usage_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    agnc_session_usage_init(usage_out);
+    (void)agnc_session_sqlite_meta_get(db, "usage_prompt_total", &prompt_text);
+    (void)agnc_session_sqlite_meta_get(db, "usage_completion_total", &completion_text);
+    (void)agnc_session_sqlite_meta_get(db, "usage_total", &total_text);
+
+    usage_out->prompt_tokens = agnc_session_parse_meta_long(prompt_text, 0);
+    usage_out->completion_tokens = agnc_session_parse_meta_long(completion_text, 0);
+    usage_out->total_tokens = agnc_session_parse_meta_long(total_text, 0);
+
+    free(prompt_text);
+    free(completion_text);
+    free(total_text);
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_usage_load(const char *path, agnc_session_usage_t *usage_out)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || usage_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (!agnc_path_exists(path)) {
+        agnc_session_usage_init(usage_out);
+        return AGNC_STATUS_OK;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_usage_load_db(db, usage_out);
+    sqlite3_close(db);
+    return status;
+}
+
+static agnc_status_t agnc_session_usage_save_db(sqlite3 *db, const agnc_session_usage_t *usage)
+{
+    char prompt_buf[32];
+    char completion_buf[32];
+    char total_buf[32];
+
+    if (db == NULL || usage == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    snprintf(prompt_buf, sizeof(prompt_buf), "%ld", usage->prompt_tokens);
+    snprintf(completion_buf, sizeof(completion_buf), "%ld", usage->completion_tokens);
+    snprintf(total_buf, sizeof(total_buf), "%ld", usage->total_tokens);
+
+    if (agnc_session_sqlite_meta_set(db, "usage_prompt_total", prompt_buf) != AGNC_STATUS_OK ||
+        agnc_session_sqlite_meta_set(db, "usage_completion_total", completion_buf) != AGNC_STATUS_OK ||
+        agnc_session_sqlite_meta_set(db, "usage_total", total_buf) != AGNC_STATUS_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_usage_save(const char *path, const agnc_session_usage_t *usage)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || usage == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_usage_save_db(db, usage);
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+    } else {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+    }
+
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_usage_accumulate(
+    const char *path,
+    long prompt_delta,
+    long completion_delta,
+    long total_delta)
+{
+    agnc_session_usage_t usage;
+    agnc_status_t status;
+
+    if (path == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (prompt_delta < 0 && completion_delta < 0 && total_delta < 0) {
+        return AGNC_STATUS_OK;
+    }
+
+    status = agnc_session_usage_load(path, &usage);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    if (prompt_delta >= 0) {
+        usage.prompt_tokens += prompt_delta;
+    }
+    if (completion_delta >= 0) {
+        usage.completion_tokens += completion_delta;
+    }
+    if (total_delta >= 0) {
+        usage.total_tokens += total_delta;
+    } else if (prompt_delta >= 0 && completion_delta >= 0) {
+        usage.total_tokens += prompt_delta + completion_delta;
+    }
+
+    return agnc_session_usage_save(path, &usage);
+}
+
+agnc_status_t agnc_session_usage_reset(const char *path)
+{
+    agnc_session_usage_t usage;
+
+    agnc_session_usage_init(&usage);
+    return agnc_session_usage_save(path, &usage);
 }
