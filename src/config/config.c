@@ -442,6 +442,7 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
     yyjson_val *permissions;
     yyjson_val *enabled;
     yyjson_val *always_ask;
+    yyjson_val *always_allow;
 
     tools = yyjson_obj_get(root, "tools");
     if (tools != NULL) {
@@ -453,21 +454,60 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
             config->tool_edit_file = agnc_config_json_array_contains(enabled, "edit_file");
             config->tool_grep = agnc_config_json_array_contains(enabled, "grep");
             config->tool_glob = agnc_config_json_array_contains(enabled, "glob");
+            config->tool_web_fetch = agnc_config_json_array_contains(enabled, "web_fetch");
+            config->tool_todo_write = agnc_config_json_array_contains(enabled, "todo_write");
             config->enable_tools = config->tool_read_file || config->tool_shell ||
                                    config->tool_write_file || config->tool_edit_file ||
-                                   config->tool_grep || config->tool_glob;
+                                   config->tool_grep || config->tool_glob ||
+                                   config->tool_web_fetch || config->tool_todo_write;
         }
     }
 
     permissions = yyjson_obj_get(root, "permissions");
     if (permissions != NULL) {
+        always_allow = yyjson_obj_get(permissions, "always_allow");
+        if (always_allow != NULL && yyjson_is_arr(always_allow)) {
+            if (agnc_config_json_array_contains(always_allow, "shell")) {
+                config->ask_shell_permission = 0;
+            }
+            if (agnc_config_json_array_contains(always_allow, "write_file") ||
+                agnc_config_json_array_contains(always_allow, "edit_file")) {
+                config->ask_write_permission = 0;
+            }
+            if (agnc_config_json_array_contains(always_allow, "mcp")) {
+                config->ask_mcp_permission = 0;
+            }
+            if (agnc_config_json_array_contains(always_allow, "web_fetch")) {
+                config->ask_web_fetch_permission = 0;
+            }
+        }
+
         always_ask = yyjson_obj_get(permissions, "always_ask");
         if (always_ask != NULL && yyjson_is_arr(always_ask)) {
-            config->ask_shell_permission = agnc_config_json_array_contains(always_ask, "shell");
+            int allow_shell =
+                always_allow != NULL && yyjson_is_arr(always_allow) &&
+                agnc_config_json_array_contains(always_allow, "shell");
+            int allow_write =
+                always_allow != NULL && yyjson_is_arr(always_allow) &&
+                (agnc_config_json_array_contains(always_allow, "write_file") ||
+                 agnc_config_json_array_contains(always_allow, "edit_file"));
+            int allow_mcp =
+                always_allow != NULL && yyjson_is_arr(always_allow) &&
+                agnc_config_json_array_contains(always_allow, "mcp");
+            int allow_web_fetch =
+                always_allow != NULL && yyjson_is_arr(always_allow) &&
+                agnc_config_json_array_contains(always_allow, "web_fetch");
+
+            config->ask_shell_permission =
+                agnc_config_json_array_contains(always_ask, "shell") && !allow_shell;
             config->ask_write_permission =
-                agnc_config_json_array_contains(always_ask, "write_file") ||
-                agnc_config_json_array_contains(always_ask, "edit_file");
-            config->ask_mcp_permission = agnc_config_json_array_contains(always_ask, "mcp");
+                (agnc_config_json_array_contains(always_ask, "write_file") ||
+                 agnc_config_json_array_contains(always_ask, "edit_file")) &&
+                !allow_write;
+            config->ask_mcp_permission =
+                agnc_config_json_array_contains(always_ask, "mcp") && !allow_mcp;
+            config->ask_web_fetch_permission =
+                agnc_config_json_array_contains(always_ask, "web_fetch") && !allow_web_fetch;
         }
     }
 }
@@ -634,9 +674,12 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_edit_file = 1;
     config->tool_grep = 1;
     config->tool_glob = 1;
+    config->tool_web_fetch = 0;
+    config->tool_todo_write = 0;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;
+    config->ask_web_fetch_permission = 1;
 }
 
 void agnc_config_free(agnc_config_t *config)

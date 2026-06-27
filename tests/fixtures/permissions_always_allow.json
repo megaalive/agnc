@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "model": "test/model",
+    "base_url": "https://example.test/v1",
+    "api_key_env": "AGNC_TEST_API_KEY"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "base_url": "https://example.test/v1",
+      "api_key_env": "AGNC_TEST_API_KEY",
+      "default_model": "test/model"
+    }
+  },
+  "permissions": {
+    "mode": "default",
+    "always_allow": ["shell", "write_file", "mcp", "web_fetch"],
+    "always_deny": [],
+    "always_ask": ["shell", "write_file", "edit_file", "mcp", "web_fetch"]
+  },
+  "tools": {
+    "enabled": ["shell", "read_file", "write_file", "web_fetch", "todo_write"]
+  },
+  "runtime": {
+    "max_tool_iterations": 5,
+    "stream": false,
+    "verbose": false
+  }
+}

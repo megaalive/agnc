@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve)
 {
@@ -44,14 +45,23 @@ int agnc_cli_run_print(const char *prompt, int no_tools, int auto_approve)
         config.tool_edit_file = 0;
         config.tool_grep = 0;
         config.tool_glob = 0;
+        config.tool_web_fetch = 0;
+        config.tool_todo_write = 0;
     }
 
     if (auto_approve) {
         config.ask_shell_permission = 0;
         config.ask_write_permission = 0;
+        config.ask_mcp_permission = 0;
+        config.ask_web_fetch_permission = 0;
     }
 
-    status = agnc_query_print(&config, prompt);
+    {
+        agnc_query_options_t options;
+        memset(&options, 0, sizeof(options));
+        options.auto_approve = auto_approve;
+        status = agnc_query_print(&config, prompt, &options);
+    }
     agnc_config_free(&config);
 
     if (status != AGNC_STATUS_OK) {

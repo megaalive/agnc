@@ -8,6 +8,8 @@
 #include "agnc/config.h"
 #include "agnc/console.h"
 #include "agnc/conversation.h"
+#include "agnc/line_edit.h"
+#include "agnc/mcp/session.h"
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/session.h"
@@ -149,7 +151,8 @@ static int agnc_repl_handle_slash(
     char *line,
     agnc_config_t *config,
     agnc_conversation_t *conversation,
-    char **session_path)
+    char **session_path,
+    agnc_mcp_session_t *mcp_session)
 {
     const char *arg;
     char *space;
@@ -243,6 +246,7 @@ static int agnc_repl_handle_slash(
         if (agnc_repl_reload_config(config) != AGNC_STATUS_OK) {
             agnc_console_print_chat_system("gagal memuat provider (cek ~/.agnc.json)");
         } else {
+            agnc_mcp_session_reset(mcp_session);
             char detail[256];
             snprintf(
                 detail,
@@ -278,6 +282,7 @@ int agnc_cli_run_interactive(void)
 {
     agnc_config_t config;
     agnc_conversation_t conversation;
+    agnc_mcp_session_t mcp_session;
     agnc_query_options_t options;
     char *session_path = NULL;
     char line[AGNC_REPL_LINE_MAX];
@@ -298,6 +303,7 @@ int agnc_cli_run_interactive(void)
     }
 
     agnc_conversation_init(&conversation);
+    agnc_mcp_session_init(&mcp_session);
     status = agnc_session_current_path(&session_path);
     if (status == AGNC_STATUS_OK && session_path != NULL) {
         /* Sisa atomic write dari proses sebelumnya (current.json.tmp.*). */
@@ -344,9 +350,10 @@ int agnc_cli_run_interactive(void)
     options.cancel_flag = &g_repl_cancel_flag;
     options.stream_live_print = 0;
     options.chat_assistant_timestamp = 1;
+    options.mcp_session = &mcp_session;
 
     for (;;) {
-        if (fgets(line, sizeof(line), stdin) == NULL) {
+        if (!agnc_repl_read_line(line, sizeof(line))) {
             break;
         }
 
@@ -358,7 +365,8 @@ int agnc_cli_run_interactive(void)
         if (line[0] == '/') {
             agnc_console_clear_input_line();
             {
-                int slash_result = agnc_repl_handle_slash(line, &config, &conversation, &session_path);
+                int slash_result = agnc_repl_handle_slash(
+                    line, &config, &conversation, &session_path, &mcp_session);
                 if (slash_result == 2) {
                     break;
                 }
@@ -399,6 +407,7 @@ int agnc_cli_run_interactive(void)
     }
 
     free(session_path);
+    agnc_mcp_session_free(&mcp_session);
     agnc_conversation_clear(&conversation);
     agnc_config_free(&config);
     return exit_code;

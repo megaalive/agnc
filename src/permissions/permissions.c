@@ -99,3 +99,26 @@ agnc_status_t agnc_permission_ask_mcp(const char *tool_name, int *allowed, int i
     agnc_permission_read_answer(allowed);
     return AGNC_STATUS_OK;
 }
+
+agnc_status_t agnc_permission_ask_web_fetch(const char *url, int *allowed, int interactive_repl)
+{
+    if (allowed == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *allowed = 0;
+    agnc_console_spinner_stop();
+
+    if (interactive_repl) {
+        agnc_console_print_permission_prompt("izinkan web_fetch?", url);
+    } else {
+        fprintf(
+            stderr,
+            "agnc: [permission] allow web_fetch? [y/N] %s\n",
+            url != NULL ? url : "(empty)");
+        fflush(stderr);
+    }
+
+    agnc_permission_read_answer(allowed);
+    return AGNC_STATUS_OK;
+}

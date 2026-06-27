@@ -817,23 +817,21 @@ Status: **selesai** (2026-06).
 
 | Item | Fase roadmap | Status | Rencana |
 | --- | --- | --- | --- |
-| Line editing REPL (`fgets`) | 4 task | Belum | **Fase 6.2** (prioritas) — lihat §12.0 |
-| `todo_write` tool | 3 §8.3 | Belum | Fase 6 backlog / slot kecil |
-| `web_fetch` tool | 4 §8.3 | Belum | **Fase 6.2** (prioritas) — lihat §12.0 |
+| Line editing REPL (`fgets`) | 4 task | **Selesai** (Fase 6.2) | `src/cli/line_edit.c`, REPL pakai `agnc_repl_read_line` |
+| `todo_write` tool | 3 §8.3 | **Selesai** (Fase 6.3 slot kecil) | `src/tools/todo_write.c`, `test_todo_write` |
+| `web_fetch` tool | 4 §8.3 | **Selesai** (Fase 6.2) | `src/tools/web_fetch.c`, `test_web_fetch` |
 | `ripgrep` di PATH dev | 2 doctor | Lingkungan | Pasang `rg` di mesin dev; `grep` tool butuh binary |
 
 Progress Fase 5: **B1–B5** selesai; **B6** housekeeping + celah terdokumentasi — berikutnya (lihat §12.0).
 
-### 11.8 Celah implementasi (ditunda ke B6 / Fase 6.1)
+### 11.8 Celah implementasi (Fase 6.1)
 
-Ditemukan saat E2E Fase 5; bukan regresi acceptance, tapi mengganggu pemakaian harian:
-
-| Celah | Dampak | Target |
+| Celah | Dampak | Status |
 | --- | --- | --- |
-| `permissions.always_allow` belum diparse | Entri `always_allow: ["mcp"]` di config tidak berpengaruh | B6 / Fase 6.1 |
+| `permissions.always_allow` belum diparse | Entri `always_allow: ["mcp"]` di config tidak berpengaruh | **Selesai** — `config.c` + `test_config_provider` |
 | `mcp.servers[].env` belum dipakai saat spawn | Server yang butuh env custom gagal diam-diam | B6 backlog |
-| MCP reconnect tiap `agnc_query_run` | REPL lambat (terutama cold `npx`) | Fase 6.1 |
-| `--yes` tidak mencakup permission MCP | Headless/script harus pipe `y` manual | Fase 6.1 |
+| MCP reconnect tiap `agnc_query_run` | REPL lambat (terutama cold `npx`) | **Selesai** — `agnc_mcp_session_t` di REPL |
+| `--yes` tidak mencakup permission MCP | Headless/script harus pipe `y` manual | **Selesai** — `--yes` + `web_fetch` |
 | UTF-8 BOM di config | `config_load` gagal jika editor menulis BOM | **Selesai** — strip di `config.c` |
 
 ## 12. Roadmap Fase
@@ -845,9 +843,9 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | Langkah | Isi | Exit singkat |
 | --- | --- | --- |
 | **1. Housekeeping Fase 5** | Tandai §11.6 selesai; catat celah §11.8; rapikan milestone B6 di bawah | Roadmap selaras dengan kode; tidak ada acceptance Fase 5 yang menggantung |
-| **2. Stabilisasi MCP harian** (Fase 6.1) | Persist koneksi MCP per sesi REPL; parse `always_allow`; `--yes` untuk MCP | REPL kedua prompt tidak spawn `npx` ulang; `always_allow: ["mcp"]` dan `--yes` menekan prompt MCP |
-| **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | REPL: backspace/history dasar; `web_fetch` dengan permission + test |
-| **4. Fitur besar** (Fase 6.3+) | Sub-agent, OAuth, Anthropic native, gRPC, hooks, skills, TUI, cost tracking | Per item: milestone + acceptance sendiri sebelum mulai kode |
+| **2. Stabilisasi MCP harian** (Fase 6.1) | Persist koneksi MCP per sesi REPL; parse `always_allow`; `--yes` untuk MCP | **Selesai** |
+| **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
+| **4. Fitur besar** (Fase 6.3+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking; slot kecil `todo_write` | `todo_write` selesai; sisanya backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. `todo_write` dan item §11.7 lainnya masuk backlog 6.3+.
 
@@ -998,33 +996,21 @@ Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
 Ikuti urutan §12.0. Jangan mulai **6.3+** sebelum **6.1** dan **6.2** selesai.
 
-#### Fase 6.1 — Stabilisasi MCP harian
+#### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
 Tasks:
 
-- Simpan `agnc_mcp_registry_t` + katalog tool di lifetime sesi REPL (bukan reconnect tiap `agnc_query_run`).
-- Parse `permissions.always_allow` (subset: `mcp`, `shell`, `write_file`, `edit_file`) — hormati bersama `always_ask`.
-- Perluas `--yes` / `auto_approve` agar mencakup prompt MCP.
-- (Opsional B6) Terapkan `mcp.servers[].env` saat `CreateProcess`.
+- Simpan `agnc_mcp_registry_t` + katalog tool di lifetime sesi REPL (bukan reconnect tiap `agnc_query_run`). — `src/mcp/session.c`, `repl.c`
+- Parse `permissions.always_allow` (subset: `mcp`, `shell`, `write_file`, `edit_file`, `web_fetch`) — hormati bersama `always_ask`.
+- Perluas `--yes` / `auto_approve` agar mencakup prompt MCP dan `web_fetch`.
+- (Opsional B6) Terapkan `mcp.servers[].env` saat `CreateProcess`. — backlog
 
-Acceptance:
-
-- Dua prompt berturut di REPL memakai satu proses MCP per server (verifikasi via log verbose atau test).
-- Config `always_allow: ["mcp"]` menekan prompt MCP; `--yes` setara untuk headless.
-- `ctest` MCP tetap lulus; tidak ada regresi `test_mcp_filesystem_e2e`.
-
-#### Fase 6.2 — REPL + web (prioritas)
+#### Fase 6.2 — REPL + web (prioritas) — **selesai**
 
 Tasks:
 
-- Ganti `fgets` dengan line editing minimal (backspace, panjang baris, history ringkas opsional).
-- Implement `web_fetch` tool (HTTP GET, truncation, permission ask/allow).
-
-Acceptance:
-
-- REPL: edit baris sebelum Enter; tidak perlu eksternal readline untuk alur dasar.
-- `web_fetch` bisa mengambil URL HTTPS dan mengembalikan teks ke model; ditolak/diizinkan sesuai config.
-- Unit atau integration test untuk `web_fetch`; smoke manual di README §13.3.
+- Ganti `fgets` dengan line editing minimal (backspace, panjang baris, history 32 baris). — `src/cli/line_edit.c`
+- Implement `web_fetch` tool (HTTP GET, truncation, permission ask/allow). — `src/tools/web_fetch.c`, `test_web_fetch`
 
 #### Fase 6.3+ — Backlog fitur besar
 
@@ -1040,7 +1026,7 @@ Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 - Skills
 - TUI lebih kaya
 - Token usage dan cost tracking
-- `todo_write` tool (§11.7)
+- ~~`todo_write` tool (§11.7)~~ — **selesai** (`src/tools/todo_write.c`)
 
 ## 13. Testing Strategy
 

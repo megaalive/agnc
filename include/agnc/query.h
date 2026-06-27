@@ -9,12 +9,15 @@
 
 #include "agnc/config.h"
 #include "agnc/conversation.h"
+#include "agnc/mcp/session.h"
 #include "agnc/status.h"
 
 typedef struct {
     volatile int *cancel_flag; /* Ctrl+C: set ke 1 untuk batalkan request HTTP aktif. */
     int stream_live_print;     /* Reserved: cetak delta SSE langsung (tidak dipakai REPL). */
     int chat_assistant_timestamp; /* REPL: cetak timestamp asisten saat jawaban siap (bukan saat mulai). */
+    int auto_approve;          /* Setujui shell/write/mcp/web_fetch tanpa prompt (headless --yes). */
+    agnc_mcp_session_t *mcp_session; /* REPL: koneksi MCP persist; NULL = load per run. */
 } agnc_query_options_t;
 
 /*
@@ -28,7 +31,10 @@ agnc_status_t agnc_query_run(
     const agnc_query_options_t *options);
 
 /* Jalankan satu sesi headless --print dengan prompt pengguna. */
-agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt);
+agnc_status_t agnc_query_print(
+    const agnc_config_t *config,
+    const char *prompt,
+    const agnc_query_options_t *options);
 
 /* System prompt default saat tools aktif/nonaktif. */
 const char *agnc_query_default_system_prompt(int enable_tools, int search_only);

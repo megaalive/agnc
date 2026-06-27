@@ -30,4 +30,9 @@ const char *agnc_tool_grep_pattern_preview(const char *arguments_json);
 agnc_status_t agnc_tool_glob_execute(const char *arguments_json, char **result_text);
 const char *agnc_tool_glob_pattern_preview(const char *arguments_json);
 
+agnc_status_t agnc_tool_web_fetch_execute(const char *arguments_json, char **result_text);
+const char *agnc_tool_web_fetch_url_preview(const char *arguments_json);
+
+agnc_status_t agnc_tool_todo_write_execute(const char *arguments_json, char **result_text);
+
 #endif

@@ -17,4 +17,6 @@ agnc_status_t agnc_permission_ask_file_write(const char *path, const char *opera
 
 agnc_status_t agnc_permission_ask_mcp(const char *tool_name, int *allowed, int interactive_repl);
 
+agnc_status_t agnc_permission_ask_web_fetch(const char *url, int *allowed, int interactive_repl);
+
 #endif

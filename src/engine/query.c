@@ -16,6 +16,7 @@
 #include "agnc/tool_path.h"
 #include "agnc/mcp/registry.h"
 #include "agnc/mcp/tools.h"
+#include "agnc/mcp/session.h"
 #include "agnc/mcp/client.h"
 
 #include <stdio.h>
@@ -225,6 +226,55 @@ static void agnc_append_glob_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
+static void agnc_append_web_fetch_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "web_fetch");
+    yyjson_mut_obj_add_str(doc, function_obj, "description", "Fetch a public HTTP or HTTPS URL and return text content.");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "url", "Absolute http:// or https:// URL to fetch.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "url"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_todo_write_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *todos_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "todo_write");
+    yyjson_mut_obj_add_str(
+        doc,
+        function_obj,
+        "description",
+        "Update the agent todo list (saved to ~/.agnc/todos.json).");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    yyjson_mut_obj_add_val(doc, properties_obj, "todos", todos_obj);
+    yyjson_mut_obj_add_str(doc, todos_obj, "type", "array");
+    yyjson_mut_obj_add_str(doc, todos_obj, "description", "Todo items with id, content, and status.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "todos"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
 static void agnc_append_shell_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
 {
     yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
@@ -401,6 +451,12 @@ static char *agnc_build_request_json(
         if (config->tool_glob) {
             agnc_append_glob_tool(doc, tools_arr);
         }
+        if (config->tool_web_fetch) {
+            agnc_append_web_fetch_tool(doc, tools_arr);
+        }
+        if (config->tool_todo_write) {
+            agnc_append_todo_write_tool(doc, tools_arr);
+        }
 
         agnc_append_mcp_tools(doc, tools_arr, mcp_catalog);
     }
@@ -430,6 +486,7 @@ static agnc_status_t agnc_execute_tool(
     char *tool_arguments,
     char **tool_result,
     int interactive_repl,
+    int auto_approve,
     const agnc_mcp_registry_t *mcp_registry,
     const agnc_mcp_tool_catalog_t *mcp_catalog)
 {
@@ -466,7 +523,7 @@ static agnc_status_t agnc_execute_tool(
         }
         free(shell_command);
 
-        if (config->ask_shell_permission) {
+        if (config->ask_shell_permission && !auto_approve) {
             status = agnc_permission_ask_shell(
                 agnc_tool_shell_command_preview(tool_arguments), &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
@@ -487,7 +544,7 @@ static agnc_status_t agnc_execute_tool(
         snprintf(tool_line, sizeof(tool_line), "write_file: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
-        if (config->ask_write_permission) {
+        if (config->ask_write_permission && !auto_approve) {
             status = agnc_permission_ask_file_write(preview, "write", &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
@@ -507,7 +564,7 @@ static agnc_status_t agnc_execute_tool(
         snprintf(tool_line, sizeof(tool_line), "edit_file: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
-        if (config->ask_write_permission) {
+        if (config->ask_write_permission && !auto_approve) {
             status = agnc_permission_ask_file_write(preview, "edit", &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
@@ -559,7 +616,7 @@ static agnc_status_t agnc_execute_tool(
         snprintf(tool_line, sizeof(tool_line), "%s", tool_name);
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
 
-        if (config->ask_mcp_permission) {
+        if (config->ask_mcp_permission && !auto_approve) {
             status = agnc_permission_ask_mcp(tool_name, &allowed, interactive_repl);
             if (status != AGNC_STATUS_OK) {
                 return status;
@@ -584,6 +641,32 @@ static agnc_status_t agnc_execute_tool(
         }
 
         return AGNC_STATUS_OK;
+    }
+
+    if (strcmp(tool_name, "web_fetch") == 0) {
+        const char *preview = agnc_tool_web_fetch_url_preview(tool_arguments);
+        char tool_line[512];
+
+        snprintf(tool_line, sizeof(tool_line), "web_fetch: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
+
+        if (config->ask_web_fetch_permission && !auto_approve) {
+            status = agnc_permission_ask_web_fetch(preview, &allowed, interactive_repl);
+            if (status != AGNC_STATUS_OK) {
+                return status;
+            }
+            if (!allowed) {
+                *tool_result = agnc_strdup_local("error: web_fetch denied by user");
+                return AGNC_STATUS_TOOL_FAILED;
+            }
+        }
+
+        return agnc_tool_web_fetch_execute(tool_arguments, tool_result);
+    }
+
+    if (strcmp(tool_name, "todo_write") == 0) {
+        agnc_query_log_tool_line(config, interactive_repl, "todo_write");
+        return agnc_tool_todo_write_execute(tool_arguments, tool_result);
     }
 
     *tool_result = agnc_strdup_local("error: unsupported tool");
@@ -775,9 +858,13 @@ agnc_status_t agnc_query_run(
     volatile int *cancel_flag = NULL;
     int stream_live_print = 0;
     int chat_assistant_timestamp = 0;
+    int auto_approve = 0;
     char *system_prompt = NULL;
-    agnc_mcp_registry_t mcp_registry;
-    agnc_mcp_tool_catalog_t mcp_catalog;
+    agnc_mcp_registry_t local_registry;
+    agnc_mcp_tool_catalog_t local_catalog;
+    const agnc_mcp_registry_t *mcp_registry = NULL;
+    const agnc_mcp_tool_catalog_t *mcp_catalog = NULL;
+    int owns_ephemeral_mcp = 0;
 
     if (config == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -787,13 +874,23 @@ agnc_status_t agnc_query_run(
         cancel_flag = options->cancel_flag;
         stream_live_print = options->stream_live_print;
         chat_assistant_timestamp = options->chat_assistant_timestamp;
+        auto_approve = options->auto_approve;
+
+        if (options->mcp_session != NULL) {
+            (void)agnc_mcp_session_ensure(options->mcp_session, config, AGNC_MCP_TIMEOUT_MS);
+            mcp_registry = &options->mcp_session->registry;
+            mcp_catalog = &options->mcp_session->catalog;
+        }
     }
 
-    agnc_mcp_registry_init(&mcp_registry);
-    agnc_mcp_tool_catalog_init(&mcp_catalog);
-    if (config->mcp_server_count > 0) {
-        (void)agnc_mcp_registry_load_from_config(config, &mcp_registry, AGNC_MCP_TIMEOUT_MS);
-        (void)agnc_mcp_tool_catalog_build(&mcp_registry, &mcp_catalog);
+    if (mcp_registry == NULL && config->mcp_server_count > 0) {
+        agnc_mcp_registry_init(&local_registry);
+        agnc_mcp_tool_catalog_init(&local_catalog);
+        (void)agnc_mcp_registry_load_from_config(config, &local_registry, AGNC_MCP_TIMEOUT_MS);
+        (void)agnc_mcp_tool_catalog_build(&local_registry, &local_catalog);
+        mcp_registry = &local_registry;
+        mcp_catalog = &local_catalog;
+        owns_ephemeral_mcp = 1;
     }
 
     if (user_prompt != NULL && user_prompt[0] != '\0') {
@@ -844,7 +941,7 @@ agnc_status_t agnc_query_run(
         }
 
         status = agnc_run_provider_turn(
-            config, conversation, &parser, &error_message, cancel_flag, &mcp_catalog);
+            config, conversation, &parser, &error_message, cancel_flag, mcp_catalog);
 
         if (chat_assistant_timestamp) {
             agnc_console_spinner_stop();
@@ -929,8 +1026,9 @@ agnc_status_t agnc_query_run(
                 arguments,
                 &tool_result,
                 chat_assistant_timestamp,
-                &mcp_registry,
-                &mcp_catalog);
+                auto_approve,
+                mcp_registry,
+                mcp_catalog);
             free(arguments);
 
             if (tool_result == NULL) {
@@ -995,17 +1093,22 @@ cleanup:
         curl_global_cleanup();
     }
 
-    agnc_mcp_tool_catalog_free(&mcp_catalog);
-    agnc_mcp_registry_free(&mcp_registry);
+    if (owns_ephemeral_mcp) {
+        agnc_mcp_tool_catalog_free(&local_catalog);
+        agnc_mcp_registry_free(&local_registry);
+    }
 
     return status;
 }
 
-agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
+agnc_status_t agnc_query_print(
+    const agnc_config_t *config,
+    const char *prompt,
+    const agnc_query_options_t *options)
 {
     agnc_config_t run_config;
     agnc_conversation_t conversation;
-    agnc_query_options_t options;
+    agnc_query_options_t local_options;
     agnc_status_t status;
 
     if (config == NULL || prompt == NULL) {
@@ -1017,10 +1120,13 @@ agnc_status_t agnc_query_print(const agnc_config_t *config, const char *prompt)
 
     agnc_conversation_init(&conversation);
 
-    memset(&options, 0, sizeof(options));
-    options.stream_live_print = 0;
+    memset(&local_options, 0, sizeof(local_options));
+    if (options != NULL) {
+        local_options = *options;
+    }
+    local_options.stream_live_print = 0;
 
-    status = agnc_query_run(&run_config, &conversation, prompt, &options);
+    status = agnc_query_run(&run_config, &conversation, prompt, &local_options);
     agnc_conversation_clear(&conversation);
     return status;
 }

@@ -37,9 +37,12 @@ typedef struct {
     int tool_edit_file;
     int tool_grep;
     int tool_glob;
+    int tool_web_fetch;
+    int tool_todo_write;
     int ask_shell_permission;
     int ask_write_permission;
     int ask_mcp_permission;
+    int ask_web_fetch_permission;
     agnc_mcp_server_config_t *mcp_servers;
     size_t mcp_server_count;
 } agnc_config_t;

@@ -30,6 +30,7 @@ add_executable(agnc
     src/cli/markdown_render.c
     src/cli/print.c
     src/cli/repl.c
+    src/cli/line_edit.c
     src/config/config.c
     src/engine/conversation.c
     src/engine/query.c
@@ -45,9 +46,12 @@ add_executable(agnc
     src/tools/grep.c
     src/tools/rg_locate.c
     src/tools/glob.c
+    src/tools/web_fetch.c
+    src/tools/todo_write.c
     src/mcp/client.c
     src/mcp/jsonrpc.c
     src/mcp/registry.c
+    src/mcp/session.c
     src/mcp/stdio.c
     src/mcp/tools.c
     src/util/atomic_write.c
@@ -355,4 +359,37 @@ if(AGNC_BUILD_TESTS)
 
     add_test(NAME test_mcp_filesystem_e2e COMMAND test_mcp_filesystem_e2e)
     set_tests_properties(test_mcp_filesystem_e2e PROPERTIES TIMEOUT 180)
+
+    add_executable(test_todo_write
+        tests/test_todo_write.c
+        src/tools/todo_write.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
+    )
+
+    target_include_directories(test_todo_write PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_todo_write PRIVATE yyjson::yyjson cmocka::cmocka)
+    agnc_set_compiler_warnings(test_todo_write)
+
+    add_test(NAME test_todo_write COMMAND test_todo_write)
+
+    add_executable(test_web_fetch
+        tests/test_web_fetch.c
+        src/tools/web_fetch.c
+        src/net/http.c
+        src/util/status.c
+    )
+
+    target_include_directories(test_web_fetch PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_web_fetch PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    agnc_set_compiler_warnings(test_web_fetch)
+
+    add_test(NAME test_web_fetch COMMAND test_web_fetch)
 endif()

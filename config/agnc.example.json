@@ -42,7 +42,7 @@
     "mode": "default",
     "always_allow": [],
     "always_deny": [],
-    "always_ask": ["shell", "write_file", "edit_file", "mcp"]
+    "always_ask": ["shell", "write_file", "edit_file", "mcp", "web_fetch"]
   },
   "mcp": {
     "servers": [
@@ -69,7 +69,7 @@
     ]
   },
   "tools": {
-    "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob"]
+    "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob", "web_fetch", "todo_write"]
   },
   "runtime": {
     "max_tool_iterations": 25,
