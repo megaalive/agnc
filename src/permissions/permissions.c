@@ -76,3 +76,26 @@ agnc_status_t agnc_permission_ask_file_write(
     agnc_permission_read_answer(allowed);
     return AGNC_STATUS_OK;
 }
+
+agnc_status_t agnc_permission_ask_mcp(const char *tool_name, int *allowed, int interactive_repl)
+{
+    if (allowed == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *allowed = 0;
+    agnc_console_spinner_stop();
+
+    if (interactive_repl) {
+        agnc_console_print_permission_prompt("izinkan MCP tool?", tool_name);
+    } else {
+        fprintf(
+            stderr,
+            "agnc: [permission] allow MCP tool? [y/N] %s\n",
+            tool_name != NULL ? tool_name : "(empty)");
+        fflush(stderr);
+    }
+
+    agnc_permission_read_answer(allowed);
+    return AGNC_STATUS_OK;
+}

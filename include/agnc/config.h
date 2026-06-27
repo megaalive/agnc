@@ -10,6 +10,17 @@
 
 #include "agnc/status.h"
 
+#include <stddef.h>
+
+typedef struct {
+    char *id;
+    char *command;
+    char **args;
+    size_t arg_count;
+    char *cwd;
+    int enabled;
+} agnc_mcp_server_config_t;
+
 typedef struct {
     char *base_url;
     char *model;
@@ -28,6 +39,9 @@ typedef struct {
     int tool_glob;
     int ask_shell_permission;
     int ask_write_permission;
+    int ask_mcp_permission;
+    agnc_mcp_server_config_t *mcp_servers;
+    size_t mcp_server_count;
 } agnc_config_t;
 
 void agnc_config_init(agnc_config_t *config);

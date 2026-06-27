@@ -14,6 +14,9 @@
 #include "agnc/status.h"
 #include "agnc/tool.h"
 #include "agnc/tool_path.h"
+#include "agnc/mcp/registry.h"
+#include "agnc/mcp/tools.h"
+#include "agnc/mcp/client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +26,7 @@
 #include <yyjson.h>
 
 #define AGNC_TOOL_RESULT_MAX 6000
+#define AGNC_MCP_TIMEOUT_MS 30000
 
 static char *agnc_strdup_local(const char *value)
 {
@@ -245,7 +249,75 @@ static void agnc_append_shell_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_ar
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
-static char *agnc_build_request_json(const agnc_config_t *config, const agnc_conversation_t *conversation)
+static int agnc_query_attach_json_object(
+    yyjson_mut_doc *doc,
+    yyjson_mut_val *parent,
+    const char *key,
+    const char *json_text)
+{
+    yyjson_doc *immutable_doc;
+    yyjson_val *immutable_root;
+    yyjson_mut_val *copy;
+
+    if (json_text == NULL || json_text[0] == '\0') {
+        return 0;
+    }
+
+    immutable_doc = yyjson_read(json_text, strlen(json_text), 0);
+    if (immutable_doc == NULL) {
+        return 0;
+    }
+
+    immutable_root = yyjson_doc_get_root(immutable_doc);
+    copy = yyjson_val_mut_copy(doc, immutable_root);
+    yyjson_doc_free(immutable_doc);
+    if (copy == NULL) {
+        return 0;
+    }
+
+    yyjson_mut_obj_add_val(doc, parent, key, copy);
+    return 1;
+}
+
+static void agnc_append_mcp_tools(
+    yyjson_mut_doc *doc,
+    yyjson_mut_val *tools_arr,
+    const agnc_mcp_tool_catalog_t *catalog)
+{
+    size_t index;
+
+    if (catalog == NULL) {
+        return;
+    }
+
+    for (index = 0; index < catalog->count; index++) {
+        const agnc_mcp_runtime_tool_t *tool = &catalog->tools[index];
+        yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+        yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+
+        yyjson_mut_arr_append(tools_arr, tool_obj);
+        yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+        yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+        yyjson_mut_obj_add_str(doc, function_obj, "name", tool->exposed_name);
+        yyjson_mut_obj_add_str(
+            doc,
+            function_obj,
+            "description",
+            tool->description != NULL ? tool->description : "MCP tool");
+        if (!agnc_query_attach_json_object(doc, function_obj, "parameters", tool->parameters_json)) {
+            yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+
+            yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+            yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+            yyjson_mut_obj_add_obj(doc, parameters_obj, "properties");
+        }
+    }
+}
+
+static char *agnc_build_request_json(
+    const agnc_config_t *config,
+    const agnc_conversation_t *conversation,
+    const agnc_mcp_tool_catalog_t *mcp_catalog)
 {
     yyjson_mut_doc *doc;
     yyjson_mut_val *root;
@@ -306,7 +378,7 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_con
         yyjson_mut_arr_append(messages_arr, entry);
     }
 
-    if (config->enable_tools) {
+    if (config->enable_tools || (mcp_catalog != NULL && mcp_catalog->count > 0)) {
         tools_arr = yyjson_mut_arr(doc);
         yyjson_mut_obj_add_val(doc, root, "tools", tools_arr);
         yyjson_mut_obj_add_str(doc, root, "tool_choice", "auto");
@@ -329,6 +401,8 @@ static char *agnc_build_request_json(const agnc_config_t *config, const agnc_con
         if (config->tool_glob) {
             agnc_append_glob_tool(doc, tools_arr);
         }
+
+        agnc_append_mcp_tools(doc, tools_arr, mcp_catalog);
     }
 
     result = yyjson_mut_write(doc, 0, NULL);
@@ -355,7 +429,9 @@ static agnc_status_t agnc_execute_tool(
     const char *tool_name,
     char *tool_arguments,
     char **tool_result,
-    int interactive_repl)
+    int interactive_repl,
+    const agnc_mcp_registry_t *mcp_registry,
+    const agnc_mcp_tool_catalog_t *mcp_catalog)
 {
     agnc_status_t status;
     int allowed = 1;
@@ -462,6 +538,54 @@ static agnc_status_t agnc_execute_tool(
         return agnc_tool_glob_execute(tool_arguments, tool_result);
     }
 
+    if (strncmp(tool_name, "mcp_", 4) == 0) {
+        const agnc_mcp_runtime_tool_t *runtime_tool;
+        const agnc_mcp_connected_server_t *server;
+        char tool_line[512];
+        agnc_status_t call_status;
+
+        runtime_tool = agnc_mcp_tool_catalog_find(mcp_catalog, tool_name);
+        if (runtime_tool == NULL || mcp_registry == NULL) {
+            *tool_result = agnc_strdup_local("error: unknown mcp tool");
+            return AGNC_STATUS_TOOL_FAILED;
+        }
+
+        server = agnc_mcp_registry_server_at(mcp_registry, runtime_tool->server_index);
+        if (server == NULL || !server->client.initialized) {
+            *tool_result = agnc_strdup_local("error: mcp server not connected");
+            return AGNC_STATUS_TOOL_FAILED;
+        }
+
+        snprintf(tool_line, sizeof(tool_line), "%s", tool_name);
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
+
+        if (config->ask_mcp_permission) {
+            status = agnc_permission_ask_mcp(tool_name, &allowed, interactive_repl);
+            if (status != AGNC_STATUS_OK) {
+                return status;
+            }
+            if (!allowed) {
+                *tool_result = agnc_strdup_local("error: mcp tool denied by user");
+                return AGNC_STATUS_TOOL_FAILED;
+            }
+        }
+
+        call_status = agnc_mcp_client_call_tool(
+            (agnc_mcp_client_t *)&server->client,
+            runtime_tool->mcp_tool_name,
+            tool_arguments,
+            tool_result,
+            AGNC_MCP_TIMEOUT_MS);
+        if (call_status != AGNC_STATUS_OK) {
+            if (*tool_result == NULL) {
+                *tool_result = agnc_strdup_local("error: mcp tool call failed");
+            }
+            return AGNC_STATUS_TOOL_FAILED;
+        }
+
+        return AGNC_STATUS_OK;
+    }
+
     *tool_result = agnc_strdup_local("error: unsupported tool");
     return AGNC_STATUS_TOOL_FAILED;
 }
@@ -471,7 +595,8 @@ static agnc_status_t agnc_run_provider_turn(
     const agnc_conversation_t *conversation,
     agnc_sse_parser_t *parser,
     char **error_message,
-    volatile int *cancel_flag)
+    volatile int *cancel_flag,
+    const agnc_mcp_tool_catalog_t *mcp_catalog)
 {
     const agnc_gateway_descriptor_t *gateway;
     char *url;
@@ -501,7 +626,7 @@ static agnc_status_t agnc_run_provider_turn(
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    request_json = agnc_build_request_json(config, conversation);
+    request_json = agnc_build_request_json(config, conversation, mcp_catalog);
     if (request_json == NULL) {
         free(auth_header);
         free(url);
@@ -651,6 +776,8 @@ agnc_status_t agnc_query_run(
     int stream_live_print = 0;
     int chat_assistant_timestamp = 0;
     char *system_prompt = NULL;
+    agnc_mcp_registry_t mcp_registry;
+    agnc_mcp_tool_catalog_t mcp_catalog;
 
     if (config == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -660,6 +787,13 @@ agnc_status_t agnc_query_run(
         cancel_flag = options->cancel_flag;
         stream_live_print = options->stream_live_print;
         chat_assistant_timestamp = options->chat_assistant_timestamp;
+    }
+
+    agnc_mcp_registry_init(&mcp_registry);
+    agnc_mcp_tool_catalog_init(&mcp_catalog);
+    if (config->mcp_server_count > 0) {
+        (void)agnc_mcp_registry_load_from_config(config, &mcp_registry, AGNC_MCP_TIMEOUT_MS);
+        (void)agnc_mcp_tool_catalog_build(&mcp_registry, &mcp_catalog);
     }
 
     if (user_prompt != NULL && user_prompt[0] != '\0') {
@@ -709,7 +843,8 @@ agnc_status_t agnc_query_run(
             agnc_console_spinner_start();
         }
 
-        status = agnc_run_provider_turn(config, conversation, &parser, &error_message, cancel_flag);
+        status = agnc_run_provider_turn(
+            config, conversation, &parser, &error_message, cancel_flag, &mcp_catalog);
 
         if (chat_assistant_timestamp) {
             agnc_console_spinner_stop();
@@ -789,7 +924,13 @@ agnc_status_t agnc_query_run(
             }
 
             status = agnc_execute_tool(
-                config, tool_call->name, arguments, &tool_result, chat_assistant_timestamp);
+                config,
+                tool_call->name,
+                arguments,
+                &tool_result,
+                chat_assistant_timestamp,
+                &mcp_registry,
+                &mcp_catalog);
             free(arguments);
 
             if (tool_result == NULL) {
@@ -853,6 +994,9 @@ cleanup:
     if (curl_initialized) {
         curl_global_cleanup();
     }
+
+    agnc_mcp_tool_catalog_free(&mcp_catalog);
+    agnc_mcp_registry_free(&mcp_registry);
 
     return status;
 }

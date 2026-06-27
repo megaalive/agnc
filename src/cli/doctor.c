@@ -8,8 +8,10 @@
 
 #include "agnc/cli.h"
 #include "agnc/config.h"
+#include "agnc/mcp/registry.h"
 #include "agnc/path.h"
 #include "agnc/provider.h"
+#include "agnc/rg_locate.h"
 #include "agnc/status.h"
 #include "agnc/version.h"
 
@@ -18,12 +20,6 @@
 #include <stdlib.h>
 
 #include <yyjson.h>
-
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
 
 /*
  * Mengembalikan nama platform compile-time.
@@ -101,19 +97,15 @@ int agnc_cli_run_doctor(void)
     printf("  %-18s %-10s %zu gateway(s) registered\n", "provider_registry", "ok", agnc_registry_gateway_count());
 
     /* ripgrep diperlukan tool grep (Fase 2). */
-#ifdef _WIN32
-    if (_access("rg.exe", 0) == 0 || _access("rg", 0) == 0) {
-        agnc_doctor_print_status("ripgrep", "ok", "rg found in PATH or cwd");
-    } else {
-        agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+    {
+        const char *rg_path = agnc_rg_locate_binary();
+
+        if (rg_path != NULL && rg_path[0] != '\0') {
+            agnc_doctor_print_status("ripgrep", "ok", rg_path);
+        } else {
+            agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+        }
     }
-#else
-    if (access("rg", X_OK) == 0) {
-        agnc_doctor_print_status("ripgrep", "ok", "rg found in PATH or cwd");
-    } else {
-        agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
-    }
-#endif
 
     /* Validasi config bisa dimuat jika file ada. */
     if (config_path != NULL && agnc_path_exists(config_path)) {
@@ -138,6 +130,45 @@ int agnc_cli_run_doctor(void)
                 config.provider_id != NULL ? config.provider_id : "?",
                 config.gateway_id != NULL ? config.gateway_id : "?");
             agnc_doctor_print_status("provider_active", "ok", detail);
+
+            if (config.mcp_server_count > 0) {
+                size_t server_index;
+                size_t enabled_count = 0;
+
+                for (server_index = 0; server_index < config.mcp_server_count; server_index++) {
+                    if (config.mcp_servers[server_index].enabled) {
+                        enabled_count++;
+                    }
+                }
+
+                snprintf(
+                    detail,
+                    sizeof(detail),
+                    "%zu configured, %zu enabled",
+                    config.mcp_server_count,
+                    enabled_count);
+                agnc_doctor_print_status("mcp_config", "ok", detail);
+
+                if (enabled_count > 0) {
+                    agnc_mcp_registry_t registry;
+
+                    agnc_mcp_registry_init(&registry);
+                    if (agnc_mcp_registry_load_from_config(&config, &registry, 5000) == AGNC_STATUS_OK) {
+                        snprintf(
+                            detail,
+                            sizeof(detail),
+                            "%zu/%zu server(s) connected",
+                            agnc_mcp_registry_server_count(&registry),
+                            enabled_count);
+                        agnc_doctor_print_status("mcp_connect", "ok", detail);
+                    } else {
+                        agnc_doctor_print_status("mcp_connect", "error", "no enabled MCP server connected");
+                    }
+                    agnc_mcp_registry_free(&registry);
+                }
+            } else {
+                agnc_doctor_print_status("mcp_config", "skipped", "no mcp.servers in config");
+            }
         } else {
             agnc_doctor_print_status("config_load", "error", "invalid config or missing API key env");
         }
@@ -152,24 +183,6 @@ int agnc_cli_run_doctor(void)
     } else {
         agnc_doctor_print_status("api_key_env", "missing", "set AGNC_API_KEY");
     }
-
-    /*
-     * Cek binary ripgrep (`rg`) karena tool grep nanti akan spawn proses eksternal,
-     * bukan implementasi pencarian sendiri.
-     */
-#ifdef _WIN32
-    if (_access("rg.exe", 0) == 0 || _access("rg", 0) == 0) {
-        agnc_doctor_print_status("rg_binary", "ok", "found in PATH or cwd");
-    } else {
-        agnc_doctor_print_status("rg_binary", "missing", "install ripgrep for grep tool");
-    }
-#else
-    if (access("rg", X_OK) == 0) {
-        agnc_doctor_print_status("rg_binary", "ok", "found in PATH or cwd");
-    } else {
-        agnc_doctor_print_status("rg_binary", "missing", "install ripgrep for grep tool");
-    }
-#endif
 
     free(config_path);
     return 0;

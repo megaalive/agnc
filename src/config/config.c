@@ -65,6 +65,13 @@ static char *agnc_config_read_file(const char *path)
 
     buffer[size] = '\0';
     fclose(file);
+
+    if (size >= 3 && (unsigned char)buffer[0] == 0xEF && (unsigned char)buffer[1] == 0xBB &&
+        (unsigned char)buffer[2] == 0xBF) {
+        memmove(buffer, buffer + 3, (size_t)size - 3);
+        buffer[size - 3] = '\0';
+    }
+
     return buffer;
 }
 
@@ -460,8 +467,155 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
             config->ask_write_permission =
                 agnc_config_json_array_contains(always_ask, "write_file") ||
                 agnc_config_json_array_contains(always_ask, "edit_file");
+            config->ask_mcp_permission = agnc_config_json_array_contains(always_ask, "mcp");
         }
     }
+}
+
+static void agnc_config_free_mcp_servers(agnc_config_t *config)
+{
+    size_t server_index;
+    size_t arg_index;
+
+    if (config == NULL || config->mcp_servers == NULL) {
+        return;
+    }
+
+    for (server_index = 0; server_index < config->mcp_server_count; server_index++) {
+        agnc_mcp_server_config_t *server = &config->mcp_servers[server_index];
+
+        free(server->id);
+        free(server->command);
+        free(server->cwd);
+
+        if (server->args != NULL) {
+            for (arg_index = 0; arg_index < server->arg_count; arg_index++) {
+                free(server->args[arg_index]);
+            }
+            free(server->args);
+        }
+    }
+
+    free(config->mcp_servers);
+    config->mcp_servers = NULL;
+    config->mcp_server_count = 0;
+}
+
+static agnc_status_t agnc_config_parse_mcp_servers(yyjson_val *root, agnc_config_t *config)
+{
+    yyjson_val *mcp;
+    yyjson_val *servers;
+    size_t count;
+    size_t index;
+
+    mcp = yyjson_obj_get(root, "mcp");
+    if (mcp == NULL) {
+        return AGNC_STATUS_OK;
+    }
+
+    servers = yyjson_obj_get(mcp, "servers");
+    if (servers == NULL) {
+        return AGNC_STATUS_OK;
+    }
+
+    if (!yyjson_is_arr(servers)) {
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    count = yyjson_arr_size(servers);
+    if (count == 0) {
+        return AGNC_STATUS_OK;
+    }
+
+    config->mcp_servers = (agnc_mcp_server_config_t *)calloc(count, sizeof(*config->mcp_servers));
+    if (config->mcp_servers == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    config->mcp_server_count = count;
+
+    for (index = 0; index < count; index++) {
+        yyjson_val *entry = yyjson_arr_get(servers, index);
+        yyjson_val *value;
+        yyjson_val *args;
+        size_t arg_count;
+        size_t arg_index;
+        agnc_mcp_server_config_t *server = &config->mcp_servers[index];
+
+        if (entry == NULL || !yyjson_is_obj(entry)) {
+            agnc_config_free_mcp_servers(config);
+            return AGNC_STATUS_JSON_ERROR;
+        }
+
+        server->enabled = 1;
+
+        value = yyjson_obj_get(entry, "id");
+        if (value != NULL && yyjson_is_str(value)) {
+            server->id = agnc_strdup_local(yyjson_get_str(value));
+            if (server->id == NULL) {
+                agnc_config_free_mcp_servers(config);
+                return AGNC_STATUS_OUT_OF_MEMORY;
+            }
+        }
+
+        value = yyjson_obj_get(entry, "enabled");
+        if (value != NULL && yyjson_is_bool(value)) {
+            server->enabled = yyjson_get_bool(value) ? 1 : 0;
+        }
+
+        value = yyjson_obj_get(entry, "command");
+        if (value != NULL && yyjson_is_str(value)) {
+            server->command = agnc_strdup_local(yyjson_get_str(value));
+            if (server->command == NULL) {
+                agnc_config_free_mcp_servers(config);
+                return AGNC_STATUS_OUT_OF_MEMORY;
+            }
+        }
+
+        value = yyjson_obj_get(entry, "cwd");
+        if (value != NULL && yyjson_is_str(value)) {
+            server->cwd = agnc_strdup_local(yyjson_get_str(value));
+            if (server->cwd == NULL) {
+                agnc_config_free_mcp_servers(config);
+                return AGNC_STATUS_OUT_OF_MEMORY;
+            }
+        }
+
+        args = yyjson_obj_get(entry, "args");
+        if (args != NULL) {
+            if (!yyjson_is_arr(args)) {
+                agnc_config_free_mcp_servers(config);
+                return AGNC_STATUS_JSON_ERROR;
+            }
+
+            arg_count = yyjson_arr_size(args);
+            if (arg_count > 0) {
+                server->args = (char **)calloc(arg_count, sizeof(*server->args));
+                if (server->args == NULL) {
+                    agnc_config_free_mcp_servers(config);
+                    return AGNC_STATUS_OUT_OF_MEMORY;
+                }
+
+                server->arg_count = arg_count;
+                for (arg_index = 0; arg_index < arg_count; arg_index++) {
+                    yyjson_val *arg_item = yyjson_arr_get(args, arg_index);
+
+                    if (arg_item == NULL || !yyjson_is_str(arg_item)) {
+                        agnc_config_free_mcp_servers(config);
+                        return AGNC_STATUS_JSON_ERROR;
+                    }
+
+                    server->args[arg_index] = agnc_strdup_local(yyjson_get_str(arg_item));
+                    if (server->args[arg_index] == NULL) {
+                        agnc_config_free_mcp_servers(config);
+                        return AGNC_STATUS_OUT_OF_MEMORY;
+                    }
+                }
+            }
+        }
+    }
+
+    return AGNC_STATUS_OK;
 }
 
 void agnc_config_init(agnc_config_t *config)
@@ -482,6 +636,7 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_glob = 1;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
+    config->ask_mcp_permission = 1;
 }
 
 void agnc_config_free(agnc_config_t *config)
@@ -490,6 +645,7 @@ void agnc_config_free(agnc_config_t *config)
         return;
     }
 
+    agnc_config_free_mcp_servers(config);
     free(config->base_url);
     free(config->model);
     free(config->api_key);
@@ -569,6 +725,13 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     }
 
     agnc_config_apply_tools_permissions(root, config);
+
+    status = agnc_config_parse_mcp_servers(root, config);
+    if (status != AGNC_STATUS_OK) {
+        yyjson_doc_free(doc);
+        agnc_config_free(config);
+        return status;
+    }
 
     yyjson_doc_free(doc);
 

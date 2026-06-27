@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "model": "owl-alpha",
+    "api_key_env": "AGNC_TEST_API_KEY"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "default_model": "openrouter/owl-alpha"
+    }
+  },
+  "runtime": {
+    "stream": false
+  },
+  "permissions": {
+    "always_ask": []
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "workspace-fs",
+        "enabled": true,
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "D:/_2025/Gits/megaalive/agnc"
+        ],
+        "cwd": null,
+        "env": {}
+      }
+    ]
+  }
+}

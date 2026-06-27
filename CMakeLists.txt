@@ -45,6 +45,11 @@ add_executable(agnc
     src/tools/grep.c
     src/tools/rg_locate.c
     src/tools/glob.c
+    src/mcp/client.c
+    src/mcp/jsonrpc.c
+    src/mcp/registry.c
+    src/mcp/stdio.c
+    src/mcp/tools.c
     src/util/atomic_write.c
     src/util/path.c
     src/util/status.c
@@ -236,4 +241,118 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_mcp_jsonrpc)
 
     add_test(NAME test_mcp_jsonrpc COMMAND test_mcp_jsonrpc)
+
+    add_executable(mcp_mock_server
+        tests/fixtures/mcp_mock_server.c
+    )
+
+    agnc_set_compiler_warnings(mcp_mock_server)
+
+    add_executable(test_mcp_stdio
+        tests/test_mcp_stdio.c
+        src/mcp/client.c
+        src/mcp/stdio.c
+        src/mcp/jsonrpc.c
+        src/util/status.c
+    )
+
+    target_include_directories(test_mcp_stdio PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_compile_definitions(test_mcp_stdio PRIVATE MCP_MOCK_SERVER="$<TARGET_FILE:mcp_mock_server>")
+    target_link_libraries(test_mcp_stdio PRIVATE yyjson::yyjson cmocka::cmocka)
+    add_dependencies(test_mcp_stdio mcp_mock_server)
+    agnc_set_compiler_warnings(test_mcp_stdio)
+
+    add_test(NAME test_mcp_stdio COMMAND test_mcp_stdio)
+
+    add_executable(test_mcp_registry
+        tests/test_mcp_registry.c
+        src/config/config.c
+        src/mcp/client.c
+        src/mcp/registry.c
+        src/mcp/stdio.c
+        src/mcp/jsonrpc.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+        src/providers/provider.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_mcp_registry PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_compile_definitions(test_mcp_registry PRIVATE
+        AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        MCP_MOCK_SERVER="$<TARGET_FILE:mcp_mock_server>"
+    )
+    target_link_libraries(test_mcp_registry PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    add_dependencies(test_mcp_registry mcp_mock_server)
+    agnc_set_compiler_warnings(test_mcp_registry)
+
+    add_test(NAME test_mcp_registry COMMAND test_mcp_registry)
+
+    add_executable(test_mcp_tools
+        tests/test_mcp_tools.c
+        src/mcp/client.c
+        src/mcp/registry.c
+        src/mcp/stdio.c
+        src/mcp/jsonrpc.c
+        src/mcp/tools.c
+        src/config/config.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+        src/providers/provider.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_mcp_tools PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_compile_definitions(test_mcp_tools PRIVATE MCP_MOCK_SERVER="$<TARGET_FILE:mcp_mock_server>")
+    target_link_libraries(test_mcp_tools PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    add_dependencies(test_mcp_tools mcp_mock_server)
+    agnc_set_compiler_warnings(test_mcp_tools)
+
+    add_test(NAME test_mcp_tools COMMAND test_mcp_tools)
+
+    add_executable(test_mcp_filesystem_e2e
+        tests/test_mcp_filesystem_e2e.c
+        src/mcp/client.c
+        src/mcp/registry.c
+        src/mcp/stdio.c
+        src/mcp/jsonrpc.c
+        src/mcp/tools.c
+        src/config/config.c
+        src/util/atomic_write.c
+        src/util/path.c
+        src/util/status.c
+        generated/agnc_integrations_gen.c
+        src/integrations/registry.c
+        src/providers/provider.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_mcp_filesystem_e2e PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated
+    )
+
+    target_compile_definitions(test_mcp_filesystem_e2e PRIVATE AGNC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(test_mcp_filesystem_e2e PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    agnc_set_compiler_warnings(test_mcp_filesystem_e2e)
+
+    add_test(NAME test_mcp_filesystem_e2e COMMAND test_mcp_filesystem_e2e)
+    set_tests_properties(test_mcp_filesystem_e2e PROPERTIES TIMEOUT 180)
 endif()

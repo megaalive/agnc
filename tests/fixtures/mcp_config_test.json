@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "openrouter",
+    "model": "owl-alpha",
+    "api_key_env": "AGNC_TEST_API_KEY"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "default_model": "openrouter/owl-alpha"
+    }
+  },
+  "runtime": {
+    "stream": false
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "workspace-fs",
+        "enabled": true,
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/workspace"],
+        "cwd": null,
+        "env": {}
+      },
+      {
+        "id": "second-server",
+        "enabled": false,
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+        "cwd": null,
+        "env": {}
+      }
+    ]
+  }
+}

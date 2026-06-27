@@ -819,7 +819,7 @@ Status: **selesai** (Windows-first, 2026-06).
 | `web_fetch` tool | 4 §8.3 | Belum | Tunda (keputusan: setelah Fase 5) |
 | `ripgrep` di PATH dev | 2 doctor | Lingkungan | Pasang `rg` di mesin dev; `grep` tool butuh binary |
 
-Progress Fase 5: **B1** JSON-RPC (`src/mcp/jsonrpc.c`, `test_mcp_jsonrpc`) — selesai saat test lulus.
+Progress Fase 5: **B1–B5** selesai (JSON-RPC, stdio, client, config/registry, wire `query.c` + permission + doctor).
 
 ## 12. Roadmap Fase
 
