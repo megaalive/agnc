@@ -33,6 +33,9 @@ typedef struct {
     int stream_mode;
     int stream_live_print; /* Cetak delta ke stdout saat stream (mode interaktif). */
     int verbose;
+    long prompt_tokens;     /* -1 jika provider tidak mengirim usage */
+    long completion_tokens;
+    long total_tokens;
 } agnc_sse_parser_t;
 
 void agnc_sse_parser_init(agnc_sse_parser_t *parser, int stream_mode, int verbose);
@@ -52,6 +55,11 @@ int agnc_sse_parser_has_tool_calls(const agnc_sse_parser_t *parser);
 size_t agnc_sse_parser_get_tool_call_count(const agnc_sse_parser_t *parser);
 const agnc_sse_tool_call_t *agnc_sse_parser_get_tool_call(const agnc_sse_parser_t *parser, size_t index);
 int agnc_sse_parser_printed_any(const agnc_sse_parser_t *parser);
+
+int agnc_sse_parser_has_usage(const agnc_sse_parser_t *parser);
+long agnc_sse_parser_get_prompt_tokens(const agnc_sse_parser_t *parser);
+long agnc_sse_parser_get_completion_tokens(const agnc_sse_parser_t *parser);
+long agnc_sse_parser_get_total_tokens(const agnc_sse_parser_t *parser);
 
 /* Perbaiki arguments tool yang dirakit dari fragmen stream model. */
 char *agnc_sse_tool_arguments_finalize(char *raw);

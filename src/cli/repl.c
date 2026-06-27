@@ -108,6 +108,7 @@ static void agnc_repl_print_help(void)
     printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
     printf("  /model [nama]      Tampilkan atau ganti model aktif\n");
     printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
+    printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
     printf("  /doctor            Jalankan health check\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nCtrl+C saat request berjalan membatalkan tanpa keluar REPL.\n");
@@ -139,6 +140,130 @@ static void agnc_repl_print_provider_status(const agnc_config_t *config)
         }
         printf("  %-28s %s%s\n", gateway->id, gateway->label != NULL ? gateway->label : "", marker);
     }
+}
+
+static size_t agnc_repl_mcp_tool_count_for_server(const agnc_mcp_tool_catalog_t *catalog, size_t server_index)
+{
+    size_t index;
+    size_t count = 0;
+
+    if (catalog == NULL || catalog->tools == NULL) {
+        return 0;
+    }
+
+    for (index = 0; index < catalog->count; index++) {
+        if (catalog->tools[index].server_index == server_index) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+static int agnc_repl_mcp_server_connected(
+    const agnc_mcp_session_t *mcp_session,
+    const char *server_id,
+    size_t *connected_index_out)
+{
+    size_t index;
+
+    if (connected_index_out != NULL) {
+        *connected_index_out = 0;
+    }
+
+    if (mcp_session == NULL || !mcp_session->loaded || server_id == NULL) {
+        return 0;
+    }
+
+    for (index = 0; index < agnc_mcp_registry_server_count(&mcp_session->registry); index++) {
+        const agnc_mcp_connected_server_t *server =
+            agnc_mcp_registry_server_at(&mcp_session->registry, index);
+
+        if (server != NULL && server->server_id != NULL && strcmp(server->server_id, server_id) == 0 &&
+            server->client.initialized) {
+            if (connected_index_out != NULL) {
+                *connected_index_out = index;
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void agnc_repl_print_mcp_status(const agnc_config_t *config, agnc_mcp_session_t *mcp_session)
+{
+    size_t index;
+    size_t enabled_count = 0;
+    size_t connected_count = 0;
+
+    if (config->mcp_server_count == 0) {
+        agnc_console_print_chat_system("MCP: tidak ada mcp.servers di config");
+        return;
+    }
+
+    if (!mcp_session->loaded) {
+        (void)agnc_mcp_session_ensure(mcp_session, config, 30000);
+    }
+
+    connected_count = agnc_mcp_registry_server_count(&mcp_session->registry);
+    for (index = 0; index < config->mcp_server_count; index++) {
+        if (config->mcp_servers[index].enabled) {
+            enabled_count++;
+        }
+    }
+
+    printf("MCP: %zu server dikonfigurasi, %zu enabled, %zu terhubung, %zu tool diekspos\n",
+        config->mcp_server_count,
+        enabled_count,
+        connected_count,
+        mcp_session->catalog.count);
+
+    for (index = 0; index < config->mcp_server_count; index++) {
+        const agnc_mcp_server_config_t *entry = &config->mcp_servers[index];
+        size_t connected_index = 0;
+        int connected = agnc_repl_mcp_server_connected(
+            mcp_session,
+            entry->id != NULL ? entry->id : "",
+            &connected_index);
+        size_t tool_count = connected ? agnc_repl_mcp_tool_count_for_server(&mcp_session->catalog, connected_index) : 0;
+
+        printf("  %-20s %-9s %-11s tools=%zu\n",
+            entry->id != NULL ? entry->id : "(no-id)",
+            entry->enabled ? "enabled" : "disabled",
+            connected ? "connected" : (entry->enabled ? "offline" : "—"),
+            tool_count);
+        if (entry->command != NULL) {
+            printf("    command: %s", entry->command);
+            if (entry->arg_count > 0 && entry->args[0] != NULL) {
+                printf(" %s", entry->args[0]);
+            }
+            printf("\n");
+        }
+    }
+}
+
+static void agnc_repl_print_usage_summary(long prompt_tokens, long completion_tokens, long total_tokens)
+{
+    char detail[128];
+
+    if (prompt_tokens < 0 && completion_tokens < 0 && total_tokens < 0) {
+        return;
+    }
+
+    if (total_tokens >= 0) {
+        snprintf(detail, sizeof(detail), "token: total %ld", total_tokens);
+    } else if (prompt_tokens >= 0 && completion_tokens >= 0) {
+        snprintf(detail, sizeof(detail), "token: prompt %ld · completion %ld", prompt_tokens, completion_tokens);
+    } else if (prompt_tokens >= 0) {
+        snprintf(detail, sizeof(detail), "token: prompt %ld", prompt_tokens);
+    } else if (completion_tokens >= 0) {
+        snprintf(detail, sizeof(detail), "token: completion %ld", completion_tokens);
+    } else {
+        return;
+    }
+
+    agnc_console_print_chat_system(detail);
 }
 
 static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
@@ -260,6 +385,36 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/mcp", 4) == 0) {
+        arg = line + 4;
+        while (*arg == ' ') {
+            arg++;
+        }
+
+        if (strncmp(arg, "reconnect", 9) == 0) {
+            agnc_status_t reconnect_status = agnc_mcp_session_reconnect(mcp_session, config, 30000);
+
+            if (reconnect_status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("MCP reconnect gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(reconnect_status));
+            } else {
+                char detail[64];
+                snprintf(
+                    detail,
+                    sizeof(detail),
+                    "MCP reconnect OK (%zu server, %zu tool)",
+                    agnc_mcp_registry_server_count(&mcp_session->registry),
+                    mcp_session->catalog.count);
+                agnc_console_print_chat_system(detail);
+            }
+            return 1;
+        }
+
+        agnc_console_print_chat_system("MCP");
+        agnc_repl_print_mcp_status(config, mcp_session);
+        return 1;
+    }
+
     if (strncmp(line, "/doctor", 7) == 0) {
         agnc_console_print_chat_system("doctor");
         (void)agnc_cli_run_doctor();
@@ -287,6 +442,9 @@ int agnc_cli_run_interactive(void)
     agnc_query_options_t options;
     char *session_path = NULL;
     char line[AGNC_REPL_LINE_MAX];
+    long usage_prompt = -1;
+    long usage_completion = -1;
+    long usage_total = -1;
     agnc_status_t status;
     int exit_code = 0;
 
@@ -352,6 +510,9 @@ int agnc_cli_run_interactive(void)
     options.stream_live_print = 0;
     options.chat_assistant_timestamp = 1;
     options.mcp_session = &mcp_session;
+    options.usage_prompt_tokens = &usage_prompt;
+    options.usage_completion_tokens = &usage_completion;
+    options.usage_total_tokens = &usage_total;
 
     for (;;) {
         if (!agnc_repl_read_line(line, sizeof(line))) {
@@ -393,6 +554,10 @@ int agnc_cli_run_interactive(void)
             printf(">\n");
             fflush(stdout);
             continue;
+        }
+
+        if (status == AGNC_STATUS_OK) {
+            agnc_repl_print_usage_summary(usage_prompt, usage_completion, usage_total);
         }
 
         if (session_path != NULL) {

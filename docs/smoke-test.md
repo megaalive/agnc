@@ -26,6 +26,7 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] Ctrl+C saat request — request dibatalkan, REPL tetap hidup
 - [ ] `/clear` — riwayat dihapus
 - [ ] `/doctor` — status environment tampil
+- [ ] Setelah turn sukses — baris `token: total N` muncul jika provider mengirim usage
 
 ## Permission
 
@@ -35,6 +36,7 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 
 ## MCP (jika `mcp.servers[]` aktif)
 
+- [ ] `/mcp` — status server MCP; `/mcp reconnect` memuat ulang koneksi
 - [ ] `agnc doctor` — `mcp_connect` OK untuk server enabled
 - [ ] REPL atau `--print --yes` — tool `mcp_*` dapat dipanggil model
 - [ ] Server dengan `env` custom — proses child menerima variabel (cek via server MCP atau mock)

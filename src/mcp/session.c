@@ -69,3 +69,13 @@ agnc_status_t agnc_mcp_session_ensure(agnc_mcp_session_t *session, const agnc_co
     session->loaded = 1;
     return AGNC_STATUS_OK;
 }
+
+agnc_status_t agnc_mcp_session_reconnect(agnc_mcp_session_t *session, const agnc_config_t *config, unsigned timeout_ms)
+{
+    if (session == NULL || config == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    agnc_mcp_session_reset(session);
+    return agnc_mcp_session_ensure(session, config, timeout_ms);
+}

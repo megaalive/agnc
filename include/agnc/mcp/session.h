@@ -25,4 +25,7 @@ void agnc_mcp_session_free(agnc_mcp_session_t *session);
 /* Muat ulang hanya jika belum loaded; panggil reset setelah config berubah. */
 agnc_status_t agnc_mcp_session_ensure(agnc_mcp_session_t *session, const agnc_config_t *config, unsigned timeout_ms);
 
+/* Putuskan semua koneksi lalu muat ulang dari config. */
+agnc_status_t agnc_mcp_session_reconnect(agnc_mcp_session_t *session, const agnc_config_t *config, unsigned timeout_ms);
+
 #endif /* AGNC_MCP_SESSION_H */

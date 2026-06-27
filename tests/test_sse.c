@@ -176,11 +176,49 @@ static void test_sse_incremental_deltas(void **state)
     agnc_sse_parser_free(&parser);
 }
 
+static void test_non_stream_usage(void **state)
+{
+    agnc_sse_parser_t parser;
+    const char *payload =
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"}}],"
+        "\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15}}";
+    (void)state;
+
+    agnc_sse_parser_init(&parser, 0, 0);
+    assert_int_equal(agnc_sse_parser_feed(&parser, payload, strlen(payload)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_flush(&parser), AGNC_STATUS_OK);
+    assert_true(agnc_sse_parser_has_usage(&parser));
+    assert_int_equal(agnc_sse_parser_get_prompt_tokens(&parser), 12);
+    assert_int_equal(agnc_sse_parser_get_completion_tokens(&parser), 3);
+    assert_int_equal(agnc_sse_parser_get_total_tokens(&parser), 15);
+    agnc_sse_parser_free(&parser);
+}
+
+static void test_sse_stream_usage(void **state)
+{
+    agnc_sse_parser_t parser;
+    const char *chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n";
+    const char *chunk2 =
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":2,\"total_tokens\":10}}\n\n";
+    (void)state;
+
+    agnc_sse_parser_init(&parser, 1, 0);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk1, strlen(chunk1)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_feed(&parser, chunk2, strlen(chunk2)), AGNC_STATUS_OK);
+    assert_true(agnc_sse_parser_has_usage(&parser));
+    assert_int_equal(agnc_sse_parser_get_prompt_tokens(&parser), 8);
+    assert_int_equal(agnc_sse_parser_get_completion_tokens(&parser), 2);
+    assert_int_equal(agnc_sse_parser_get_total_tokens(&parser), 10);
+    agnc_sse_parser_free(&parser);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_non_stream_content),
+        cmocka_unit_test(test_non_stream_usage),
         cmocka_unit_test(test_sse_chunked_lines),
+        cmocka_unit_test(test_sse_stream_usage),
         cmocka_unit_test(test_sse_incremental_deltas),
         cmocka_unit_test(test_sse_incremental_mid_word),
         cmocka_unit_test(test_tool_call_non_stream),

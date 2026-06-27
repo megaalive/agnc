@@ -28,6 +28,9 @@ void agnc_sse_parser_init(agnc_sse_parser_t *parser, int stream_mode, int verbos
     memset(parser, 0, sizeof(*parser));
     parser->stream_mode = stream_mode;
     parser->verbose = verbose;
+    parser->prompt_tokens = -1;
+    parser->completion_tokens = -1;
+    parser->total_tokens = -1;
 }
 
 void agnc_sse_parser_set_live_print(agnc_sse_parser_t *parser, int enabled)
@@ -101,6 +104,54 @@ const agnc_sse_tool_call_t *agnc_sse_parser_get_tool_call(const agnc_sse_parser_
 int agnc_sse_parser_printed_any(const agnc_sse_parser_t *parser)
 {
     return parser->printed_any;
+}
+
+int agnc_sse_parser_has_usage(const agnc_sse_parser_t *parser)
+{
+    if (parser == NULL) {
+        return 0;
+    }
+
+    return parser->prompt_tokens >= 0 || parser->completion_tokens >= 0 || parser->total_tokens >= 0;
+}
+
+long agnc_sse_parser_get_prompt_tokens(const agnc_sse_parser_t *parser)
+{
+    return parser != NULL ? parser->prompt_tokens : -1;
+}
+
+long agnc_sse_parser_get_completion_tokens(const agnc_sse_parser_t *parser)
+{
+    return parser != NULL ? parser->completion_tokens : -1;
+}
+
+long agnc_sse_parser_get_total_tokens(const agnc_sse_parser_t *parser)
+{
+    return parser != NULL ? parser->total_tokens : -1;
+}
+
+static void agnc_sse_apply_usage(agnc_sse_parser_t *parser, yyjson_val *usage)
+{
+    yyjson_val *value;
+
+    if (parser == NULL || usage == NULL || !yyjson_is_obj(usage)) {
+        return;
+    }
+
+    value = yyjson_obj_get(usage, "prompt_tokens");
+    if (value != NULL && yyjson_is_int(value)) {
+        parser->prompt_tokens = (long)yyjson_get_int(value);
+    }
+
+    value = yyjson_obj_get(usage, "completion_tokens");
+    if (value != NULL && yyjson_is_int(value)) {
+        parser->completion_tokens = (long)yyjson_get_int(value);
+    }
+
+    value = yyjson_obj_get(usage, "total_tokens");
+    if (value != NULL && yyjson_is_int(value)) {
+        parser->total_tokens = (long)yyjson_get_int(value);
+    }
 }
 
 static agnc_status_t agnc_sse_append_line_buffer(agnc_sse_parser_t *parser, const char *data, size_t length)
@@ -658,6 +709,8 @@ static agnc_status_t agnc_sse_handle_event(agnc_sse_parser_t *parser, const char
             return status;
         }
     }
+
+    agnc_sse_apply_usage(parser, yyjson_obj_get(root, "usage"));
 
     yyjson_doc_free(doc);
     return AGNC_STATUS_OK;

@@ -29,6 +29,46 @@
 #define AGNC_TOOL_RESULT_MAX 6000
 #define AGNC_MCP_TIMEOUT_MS 30000
 
+static void agnc_query_accumulate_usage(const agnc_sse_parser_t *parser, const agnc_query_options_t *options)
+{
+    if (parser == NULL || options == NULL || !agnc_sse_parser_has_usage(parser)) {
+        return;
+    }
+
+    if (options->usage_prompt_tokens != NULL) {
+        long value = agnc_sse_parser_get_prompt_tokens(parser);
+
+        if (value >= 0) {
+            if (*options->usage_prompt_tokens < 0) {
+                *options->usage_prompt_tokens = 0;
+            }
+            *options->usage_prompt_tokens += value;
+        }
+    }
+
+    if (options->usage_completion_tokens != NULL) {
+        long value = agnc_sse_parser_get_completion_tokens(parser);
+
+        if (value >= 0) {
+            if (*options->usage_completion_tokens < 0) {
+                *options->usage_completion_tokens = 0;
+            }
+            *options->usage_completion_tokens += value;
+        }
+    }
+
+    if (options->usage_total_tokens != NULL) {
+        long value = agnc_sse_parser_get_total_tokens(parser);
+
+        if (value >= 0) {
+            if (*options->usage_total_tokens < 0) {
+                *options->usage_total_tokens = 0;
+            }
+            *options->usage_total_tokens += value;
+        }
+    }
+}
+
 static char *agnc_strdup_local(const char *value)
 {
 #ifdef _MSC_VER
@@ -488,7 +528,8 @@ static agnc_status_t agnc_execute_tool(
     int interactive_repl,
     int auto_approve,
     const agnc_mcp_registry_t *mcp_registry,
-    const agnc_mcp_tool_catalog_t *mcp_catalog)
+    const agnc_mcp_tool_catalog_t *mcp_catalog,
+    agnc_mcp_session_t *mcp_session_reconnect)
 {
     agnc_status_t status;
     int allowed = 1;
@@ -653,6 +694,25 @@ static agnc_status_t agnc_execute_tool(
             tool_arguments,
             tool_result,
             AGNC_MCP_TIMEOUT_MS);
+        if (call_status != AGNC_STATUS_OK && mcp_session_reconnect != NULL) {
+            agnc_status_t reconnect_status =
+                agnc_mcp_session_reconnect(mcp_session_reconnect, config, AGNC_MCP_TIMEOUT_MS);
+
+            if (reconnect_status == AGNC_STATUS_OK) {
+                mcp_registry = &mcp_session_reconnect->registry;
+                mcp_catalog = &mcp_session_reconnect->catalog;
+                server = agnc_mcp_registry_server_at(mcp_registry, runtime_tool->server_index);
+                if (server != NULL && server->client.initialized) {
+                    call_status = agnc_mcp_client_call_tool(
+                        (agnc_mcp_client_t *)&server->client,
+                        runtime_tool->mcp_tool_name,
+                        tool_arguments,
+                        tool_result,
+                        AGNC_MCP_TIMEOUT_MS);
+                }
+            }
+        }
+
         if (call_status != AGNC_STATUS_OK) {
             if (*tool_result == NULL) {
                 *tool_result = agnc_strdup_local("error: mcp tool call failed");
@@ -901,6 +961,16 @@ agnc_status_t agnc_query_run(
         chat_assistant_timestamp = options->chat_assistant_timestamp;
         auto_approve = options->auto_approve;
 
+        if (options->usage_prompt_tokens != NULL) {
+            *options->usage_prompt_tokens = -1;
+        }
+        if (options->usage_completion_tokens != NULL) {
+            *options->usage_completion_tokens = -1;
+        }
+        if (options->usage_total_tokens != NULL) {
+            *options->usage_total_tokens = -1;
+        }
+
         if (options->mcp_session != NULL) {
             (void)agnc_mcp_session_ensure(options->mcp_session, config, AGNC_MCP_TIMEOUT_MS);
             mcp_registry = &options->mcp_session->registry;
@@ -975,6 +1045,8 @@ agnc_status_t agnc_query_run(
         if (status != AGNC_STATUS_OK) {
             goto cleanup;
         }
+
+        agnc_query_accumulate_usage(&parser, options);
 
         agnc_sse_parser_finalize_turn(&parser);
 
@@ -1053,7 +1125,8 @@ agnc_status_t agnc_query_run(
                 chat_assistant_timestamp,
                 auto_approve,
                 mcp_registry,
-                mcp_catalog);
+                mcp_catalog,
+                options != NULL ? options->mcp_session : NULL);
             free(arguments);
 
             if (tool_result == NULL) {

@@ -18,6 +18,9 @@ typedef struct {
     int chat_assistant_timestamp; /* REPL: cetak timestamp asisten saat jawaban siap (bukan saat mulai). */
     int auto_approve;          /* Setujui shell/write/mcp/web_fetch tanpa prompt (headless --yes). */
     agnc_mcp_session_t *mcp_session; /* REPL: koneksi MCP persist; NULL = load per run. */
+    long *usage_prompt_tokens;     /* Opsional: akumulasi prompt tokens seluruh turn (-1 = belum ada). */
+    long *usage_completion_tokens;
+    long *usage_total_tokens;
 } agnc_query_options_t;
 
 /*

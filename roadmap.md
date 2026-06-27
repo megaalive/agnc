@@ -856,6 +856,15 @@ Status: **selesai** (Windows-first, 2026-06).
 - CI memanggil `ctest` penuh; smoke test terdokumentasi di `docs/smoke-test.md`.
 - Test: `test_mcp_stdio` (env spawn), `test_config_provider` (always_deny), `test_shell` (dangerous), `test_mcp_registry` (env parse).
 
+### 11.11 Fase 6.6 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Slash `/mcp` menampilkan status server (enabled/connected/tools); `/mcp reconnect` memuat ulang koneksi.
+- SSE parser mengekstrak `usage` (prompt/completion/total); REPL menampilkan ringkasan per turn.
+- Tool MCP yang gagal memicu reconnect otomatis sekali lalu retry call.
+- Test: `test_sse` (usage stream + non-stream).
+
 ## 12. Roadmap Fase
 
 ### 12.0 Urutan kerja pasca-Fase 5 (dikunci 2026-06)
@@ -869,7 +878,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.5+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking | backlog |
+| **6. Fitur besar** (Fase 6.7+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, multi-session | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -882,6 +891,14 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **6.5.3** | Shell dangerous-command classifier | **Selesai** |
 | **6.5.4** | CI: `ctest` penuh tanpa build target manual | **Selesai** |
 | **6.5.5** | Smoke test checklist (`docs/smoke-test.md`) | **Selesai** |
+
+### 12.2 Urutan kerja Fase 6.6 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.6.1** | Slash `/mcp` + status server | **Selesai** |
+| **6.6.2** | Token usage per turn di REPL | **Selesai** |
+| **6.6.3** | MCP auto-reconnect saat tool call gagal | **Selesai** |
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
 
@@ -1028,7 +1045,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.6+** sebelum **6.5** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.7+** sebelum **6.6** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1069,7 +1086,15 @@ Tasks:
 - CI: hanya `ctest` penuh. — `.github/workflows/ci.yml`
 - Smoke test manual. — `docs/smoke-test.md`
 
-#### Fase 6.6+ — Backlog fitur besar
+#### Fase 6.6 — UX pemakaian harian — **selesai**
+
+Tasks:
+
+- Slash `/mcp` dan `/mcp reconnect` di REPL. — `src/cli/repl.c`
+- Parse `usage` dari SSE; tampilkan token summary per turn. — `src/net/sse.c`, `query.c`, `repl.c`
+- MCP auto-reconnect + retry sekali saat `tools/call` gagal. — `query.c`, `session.c`
+
+#### Fase 6.7+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

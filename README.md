@@ -68,7 +68,7 @@ Jalankan tanpa argumen untuk REPL chat dengan streaming:
 .\out\build\x64-Debug\agnc.exe
 ```
 
-Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/doctor`, `/exit`.
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/doctor`, `/exit`.
 
 **Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, dan wrap multi-baris — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`) dan sesi input konsol (`src/cli/console.c`). Di Unix fallback ke `fgets` dengan history.
 
@@ -77,6 +77,8 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/doctor`,
 **Session:** satu riwayat aktif di `%USERPROFILE%\.agnc\sessions\current.json`. Sisa file `current.json.tmp.*` dari simpan terputus dibersihkan otomatis saat REPL dibuka. Riwayat yang terlalu panjang diringkas otomatis.
 
 Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
+
+Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: total N`). `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
 
 ### Mode headless `--print`
 
@@ -160,4 +162,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.3** — `todo_write`: selesai
 - **Fase 6.4** — modul konsol REPL Windows (input mentah, paste, permission terintegrasi): selesai
 - **Fase 6.5** — env MCP spawn, `always_deny`, shell safety, CI, smoke test: selesai
-- **Fase 6.6+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, cost tracking: backlog (lihat `roadmap.md`)
+- **Fase 6.6** — `/mcp`, token usage REPL, MCP auto-reconnect: selesai
+- **Fase 6.7+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, multi-session: backlog (lihat `roadmap.md`)
