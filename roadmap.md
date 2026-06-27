@@ -805,23 +805,51 @@ Status: **selesai** (Windows-first, 2026-06).
 
 ### 11.6 Fase 5 Acceptance
 
+Status: **selesai** (2026-06).
+
 - MCP stdio client bisa list tools dan call tool.
 - MCP tool schema masuk ke registry runtime.
 - Permission gate berlaku untuk MCP.
 - Error MCP tidak membuat query loop crash.
+- E2E filesystem nyata: `test_mcp_filesystem_e2e`, `agnc doctor` (`mcp_connect`), `agnc --print` dengan `mcp_workspace-fs_*`.
 
 ### 11.7 Utang terbuka (bukan blocker Fase 5)
 
 | Item | Fase roadmap | Status | Rencana |
 | --- | --- | --- | --- |
-| Line editing REPL (`fgets`) | 4 task | Belum | Tunda → Fase 6 atau setelah MCP stabil |
-| `todo_write` tool | 3 §8.3 | Belum | Tunda → Fase 6 / slot kecil |
-| `web_fetch` tool | 4 §8.3 | Belum | Tunda (keputusan: setelah Fase 5) |
+| Line editing REPL (`fgets`) | 4 task | Belum | **Fase 6.2** (prioritas) — lihat §12.0 |
+| `todo_write` tool | 3 §8.3 | Belum | Fase 6 backlog / slot kecil |
+| `web_fetch` tool | 4 §8.3 | Belum | **Fase 6.2** (prioritas) — lihat §12.0 |
 | `ripgrep` di PATH dev | 2 doctor | Lingkungan | Pasang `rg` di mesin dev; `grep` tool butuh binary |
 
-Progress Fase 5: **B1–B5** selesai (JSON-RPC, stdio, client, config/registry, wire `query.c` + permission + doctor).
+Progress Fase 5: **B1–B5** selesai; **B6** housekeeping + celah terdokumentasi — berikutnya (lihat §12.0).
+
+### 11.8 Celah implementasi (ditunda ke B6 / Fase 6.1)
+
+Ditemukan saat E2E Fase 5; bukan regresi acceptance, tapi mengganggu pemakaian harian:
+
+| Celah | Dampak | Target |
+| --- | --- | --- |
+| `permissions.always_allow` belum diparse | Entri `always_allow: ["mcp"]` di config tidak berpengaruh | B6 / Fase 6.1 |
+| `mcp.servers[].env` belum dipakai saat spawn | Server yang butuh env custom gagal diam-diam | B6 backlog |
+| MCP reconnect tiap `agnc_query_run` | REPL lambat (terutama cold `npx`) | Fase 6.1 |
+| `--yes` tidak mencakup permission MCP | Headless/script harus pipe `y` manual | Fase 6.1 |
+| UTF-8 BOM di config | `config_load` gagal jika editor menulis BOM | **Selesai** — strip di `config.c` |
 
 ## 12. Roadmap Fase
+
+### 12.0 Urutan kerja pasca-Fase 5 (dikunci 2026-06)
+
+Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelum tiga langkah awal stabil.
+
+| Langkah | Isi | Exit singkat |
+| --- | --- | --- |
+| **1. Housekeeping Fase 5** | Tandai §11.6 selesai; catat celah §11.8; rapikan milestone B6 di bawah | Roadmap selaras dengan kode; tidak ada acceptance Fase 5 yang menggantung |
+| **2. Stabilisasi MCP harian** (Fase 6.1) | Persist koneksi MCP per sesi REPL; parse `always_allow`; `--yes` untuk MCP | REPL kedua prompt tidak spawn `npx` ulang; `always_allow: ["mcp"]` dan `--yes` menekan prompt MCP |
+| **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | REPL: backspace/history dasar; `web_fetch` dengan permission + test |
+| **4. Fitur besar** (Fase 6.3+) | Sub-agent, OAuth, Anthropic native, gRPC, hooks, skills, TUI, cost tracking | Per item: milestone + acceptance sendiri sebelum mulai kode |
+
+**Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. `todo_write` dan item §11.7 lainnya masuk backlog 6.3+.
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
 
@@ -956,18 +984,51 @@ Tasks:
 | # | Deliverable | File utama |
 | --- | --- | --- |
 | B1 | JSON-RPC parse/serialize + test fixture | `src/mcp/jsonrpc.c`, `tests/test_mcp_jsonrpc.c` |
-| B2 | Stdio transport + spawn proses Windows | `src/mcp/stdio_transport.c`, `src/mcp/process_win32.c` |
+| B2 | Stdio transport + spawn proses Windows | `src/mcp/stdio.c` |
 | B3 | MCP session (initialize, tools/list, tools/call) | `src/mcp/client.c`, mock server di `tests/fixtures/` |
 | B4 | Config loader `mcp.servers[]` + multi-server manager | `src/config/config.c`, `src/mcp/registry.c` |
 | B5 | Wire agent loop + permission + doctor | `query.c`, `permissions.c`, `doctor.c` |
+| B6 | Housekeeping: §11.6/§11.8, perbaikan kecil dokumentasi & celah opsional (`env` spawn) | `roadmap.md`, `config.c`, `permissions.c` |
 
-Exit criteria: Fase 5 Acceptance terpenuhi.
+Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional sebelum Fase 6.1.
 
 ### Fase 6: Parity Lanjut (ongoing)
 
-Tujuan: mendekati pengalaman OpenClaude penuh.
+Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Candidates:
+Ikuti urutan §12.0. Jangan mulai **6.3+** sebelum **6.1** dan **6.2** selesai.
+
+#### Fase 6.1 — Stabilisasi MCP harian
+
+Tasks:
+
+- Simpan `agnc_mcp_registry_t` + katalog tool di lifetime sesi REPL (bukan reconnect tiap `agnc_query_run`).
+- Parse `permissions.always_allow` (subset: `mcp`, `shell`, `write_file`, `edit_file`) — hormati bersama `always_ask`.
+- Perluas `--yes` / `auto_approve` agar mencakup prompt MCP.
+- (Opsional B6) Terapkan `mcp.servers[].env` saat `CreateProcess`.
+
+Acceptance:
+
+- Dua prompt berturut di REPL memakai satu proses MCP per server (verifikasi via log verbose atau test).
+- Config `always_allow: ["mcp"]` menekan prompt MCP; `--yes` setara untuk headless.
+- `ctest` MCP tetap lulus; tidak ada regresi `test_mcp_filesystem_e2e`.
+
+#### Fase 6.2 — REPL + web (prioritas)
+
+Tasks:
+
+- Ganti `fgets` dengan line editing minimal (backspace, panjang baris, history ringkas opsional).
+- Implement `web_fetch` tool (HTTP GET, truncation, permission ask/allow).
+
+Acceptance:
+
+- REPL: edit baris sebelum Enter; tidak perlu eksternal readline untuk alur dasar.
+- `web_fetch` bisa mengambil URL HTTPS dan mengembalikan teks ke model; ditolak/diizinkan sesuai config.
+- Unit atau integration test untuk `web_fetch`; smoke manual di README §13.3.
+
+#### Fase 6.3+ — Backlog fitur besar
+
+Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 
 - Background sessions
 - Sub-agent
@@ -979,6 +1040,7 @@ Candidates:
 - Skills
 - TUI lebih kaya
 - Token usage dan cost tracking
+- `todo_write` tool (§11.7)
 
 ## 13. Testing Strategy
 
