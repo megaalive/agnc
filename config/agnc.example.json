@@ -71,6 +71,10 @@
   "tools": {
     "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob", "find_symbol", "web_fetch", "todo_write"]
   },
+  "skills": {
+    "enabled": true,
+    "paths": ["~/.agnc/skills", ".agnc/skills"]
+  },
   "runtime": {
     "max_tool_iterations": 25,
     "stream": true,

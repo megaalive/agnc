@@ -15,6 +15,7 @@
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/session.h"
+#include "agnc/skills.h"
 #include "agnc/tool.h"
 #include "agnc/tool_cache.h"
 
@@ -117,6 +118,7 @@ static void agnc_repl_print_help(void)
     printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
     printf("  /session delete <nama>  Hapus file sesi dari disk\n");
     printf("  /doctor            Jalankan health check\n");
+    printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nWorkspace dan config agnc:\n");
     printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
@@ -446,6 +448,39 @@ static agnc_status_t agnc_repl_delete_session(
     return agnc_session_delete_by_name(name);
 }
 
+static void agnc_repl_print_skills(const agnc_config_t *config, int reloaded)
+{
+    agnc_skill_entry_t *entries = NULL;
+    size_t count = 0;
+    size_t index;
+
+    if (config == NULL || !config->skills_enabled) {
+        agnc_console_print_chat_system("skills: nonaktif di config");
+        return;
+    }
+
+    if (agnc_skills_list(config, &entries, &count) != AGNC_STATUS_OK) {
+        agnc_console_print_chat_system("skills: gagal baca folder");
+        return;
+    }
+
+    if (reloaded) {
+        agnc_console_print_chat_system("skills: cache dimuat ulang");
+    }
+
+    if (count == 0) {
+        agnc_console_print_chat_system("skills: tidak ada file (.md atau */SKILL.md)");
+        return;
+    }
+
+    printf("Skills (%zu):\n", count);
+    for (index = 0; index < count; index++) {
+        printf("  %s  (%zu bytes)\n  %s\n", entries[index].name, entries[index].size_bytes, entries[index].path);
+    }
+
+    agnc_skills_list_free(entries, count);
+}
+
 static int agnc_repl_handle_slash(
     char *line,
     agnc_config_t *config,
@@ -673,6 +708,20 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/skills", 7) == 0) {
+        arg = line + 7;
+        while (*arg == ' ') {
+            arg++;
+        }
+        if (strcmp(arg, "reload") == 0) {
+            agnc_skills_invalidate();
+            agnc_repl_print_skills(config, 1);
+        } else {
+            agnc_repl_print_skills(config, 0);
+        }
+        return 1;
+    }
+
     if (strncmp(line, "/doctor", 7) == 0) {
         agnc_console_print_chat_system("doctor");
         (void)agnc_cli_run_doctor();
@@ -725,6 +774,7 @@ int agnc_cli_run_interactive(void)
     agnc_permission_session_reset();
     agnc_tool_cache_reset();
     agnc_find_symbol_index_invalidate();
+    agnc_skills_invalidate();
     status = agnc_session_active_name_load(&active_session_name);
     if (status != AGNC_STATUS_OK || active_session_name == NULL) {
         free(active_session_name);

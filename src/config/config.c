@@ -436,6 +436,72 @@ static int agnc_config_json_array_contains(yyjson_val *array, const char *name)
     return 0;
 }
 
+static void agnc_config_free_skills_paths(agnc_config_t *config)
+{
+    size_t index;
+
+    if (config == NULL) {
+        return;
+    }
+
+    for (index = 0; index < config->skills_path_count; index++) {
+        free(config->skills_paths[index]);
+    }
+    free(config->skills_paths);
+    config->skills_paths = NULL;
+    config->skills_path_count = 0;
+}
+
+static agnc_status_t agnc_config_parse_skills(yyjson_val *root, agnc_config_t *config)
+{
+    yyjson_val *skills;
+    yyjson_val *enabled;
+    yyjson_val *paths;
+    size_t index;
+    size_t count;
+
+    skills = yyjson_obj_get(root, "skills");
+    if (skills == NULL) {
+        return AGNC_STATUS_OK;
+    }
+
+    enabled = yyjson_obj_get(skills, "enabled");
+    if (enabled != NULL && yyjson_is_bool(enabled)) {
+        config->skills_enabled = yyjson_get_bool(enabled) ? 1 : 0;
+    }
+
+    paths = yyjson_obj_get(skills, "paths");
+    if (paths == NULL || !yyjson_is_arr(paths)) {
+        return AGNC_STATUS_OK;
+    }
+
+    count = yyjson_arr_size(paths);
+    if (count == 0) {
+        return AGNC_STATUS_OK;
+    }
+
+    config->skills_paths = (char **)calloc(count, sizeof(*config->skills_paths));
+    if (config->skills_paths == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    for (index = 0; index < count; index++) {
+        yyjson_val *item = yyjson_arr_get(paths, index);
+        if (item == NULL || !yyjson_is_str(item)) {
+            continue;
+        }
+
+        config->skills_paths[config->skills_path_count] = agnc_strdup_local(yyjson_get_str(item));
+        if (config->skills_paths[config->skills_path_count] == NULL) {
+            agnc_config_free_skills_paths(config);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+        config->skills_path_count++;
+    }
+
+    return AGNC_STATUS_OK;
+}
+
 static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t *config)
 {
     yyjson_val *tools;
@@ -763,6 +829,7 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_web_fetch = 0;
     config->tool_todo_write = 0;
     config->tool_find_symbol = 1;
+    config->skills_enabled = 1;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;
@@ -776,6 +843,7 @@ void agnc_config_free(agnc_config_t *config)
     }
 
     agnc_config_free_mcp_servers(config);
+    agnc_config_free_skills_paths(config);
     free(config->base_url);
     free(config->model);
     free(config->api_key);
@@ -855,6 +923,13 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     }
 
     agnc_config_apply_tools_permissions(root, config);
+
+    status = agnc_config_parse_skills(root, config);
+    if (status != AGNC_STATUS_OK) {
+        yyjson_doc_free(doc);
+        agnc_config_free(config);
+        return status;
+    }
 
     status = agnc_config_parse_mcp_servers(root, config);
     if (status != AGNC_STATUS_OK) {

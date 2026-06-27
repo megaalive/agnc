@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.12+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
+| **6. Fitur besar** (Fase 6.13+) | Sub-agent, OAuth, gRPC, hooks, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -960,6 +960,22 @@ Status: **selesai** (Windows-first, 2026-06).
 - System prompt menyertakan konteks produk agnc (host CLI, path config/sessions, beda tool workspace vs MCP).
 - `read_file` mengizinkan path absolut di bawah `~/.agnc/` dan `~/.agnc.json` untuk diagnosa.
 - `/help` dan `agnc doctor` menjelaskan cara pindah workspace (`AGNC_WORKSPACE` + restart).
+
+### 11.17 Fase 6.12 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Load `*.md` dan `*/SKILL.md` dari `~/.agnc/skills` + `.agnc/skills` (config `skills.paths`).
+- Konteks skills di-inject ke system prompt (max 16 KB); cache per sesi REPL.
+- REPL: `/skills`, `/skills reload`; doctor menampilkan jumlah skill file.
+
+### 12.8 Urutan kerja Fase 6.12 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.12.1** | Modul `skills.c` + config | **Selesai** |
+| **6.12.2** | Integrasi system prompt + REPL/doctor | **Selesai** |
+| **6.12.3** | Test + docs | **Selesai** |
 
 ### 12.7 Urutan kerja Fase 6.11a (dikunci 2026-06)
 
@@ -1130,7 +1146,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.12+** sebelum **6.11a** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.13+** sebelum **6.12** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1218,7 +1234,14 @@ Tasks:
 - `read_file` operator path `~/.agnc*`. — `tool_path.c`, `read_file.c`
 - `/help` + doctor workspace hint. — `repl.c`, `doctor.c`
 
-#### Fase 6.12+ — Backlog fitur besar
+#### Fase 6.12 — Skills (ringan) — **selesai**
+
+Tasks:
+
+- Loader markdown skills + config `skills.paths`. — `skills.c`, `config.c`
+- Inject ke system prompt; `/skills` di REPL. — `query.c`, `repl.c`
+
+#### Fase 6.13+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 
@@ -1229,7 +1252,6 @@ Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 - Ollama/local model polish
 - gRPC server
 - Hooks
-- Skills
 - TUI lebih kaya
 - Token usage dan cost tracking
 - ~~`todo_write` tool (§11.7)~~ — **selesai** (`src/tools/todo_write.c`)

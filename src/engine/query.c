@@ -13,6 +13,7 @@
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/session.h"
+#include "agnc/skills.h"
 #include "agnc/status.h"
 #include "agnc/tool.h"
 #include "agnc/tool_cache.h"
@@ -1084,11 +1085,12 @@ static char *agnc_query_build_product_context(const char *workspace_root)
     return context;
 }
 
-static char *agnc_query_build_system_prompt(int enable_tools, int search_only)
+static char *agnc_query_build_system_prompt(const agnc_config_t *config, int enable_tools, int search_only)
 {
     const char *base = agnc_query_default_system_prompt(enable_tools, search_only);
     char *workspace_root = NULL;
     char *product_context = NULL;
+    char *skills_context = NULL;
     char *prompt = NULL;
     size_t length;
 
@@ -1101,24 +1103,32 @@ static char *agnc_query_build_system_prompt(int enable_tools, int search_only)
     }
 
     product_context = agnc_query_build_product_context(workspace_root);
-    length = strlen(base) + strlen(workspace_root) + (product_context != NULL ? strlen(product_context) : 0) + 192;
+    if (config != NULL) {
+        (void)agnc_skills_build_context(config, &skills_context);
+    }
+
+    length = strlen(base) + strlen(workspace_root) + (product_context != NULL ? strlen(product_context) : 0) +
+             (skills_context != NULL ? strlen(skills_context) : 0) + 192;
     prompt = (char *)malloc(length);
     if (prompt == NULL) {
         free(workspace_root);
         free(product_context);
+        free(skills_context);
         return agnc_strdup_local(base);
     }
 
     snprintf(
         prompt,
         length,
-        "%s %s Workspace root: %s. For workspace-wide file counts use glob with path \".\"; "
+        "%s %s %s Workspace root: %s. For workspace-wide file counts use glob with path \".\"; "
         "use shell dir only when the user names a specific folder.",
         base,
         product_context != NULL ? product_context : "",
+        skills_context != NULL ? skills_context : "",
         workspace_root);
     free(workspace_root);
     free(product_context);
+    free(skills_context);
     return prompt;
 }
 
@@ -1195,7 +1205,7 @@ agnc_status_t agnc_query_run(
         }
     }
 
-    system_prompt = agnc_query_build_system_prompt(config->enable_tools, search_only);
+    system_prompt = agnc_query_build_system_prompt(config, config->enable_tools, search_only);
     status = agnc_conversation_ensure_system(conversation, system_prompt);
     free(system_prompt);
     system_prompt = NULL;

@@ -62,6 +62,12 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `/help` — bagian "Workspace dan config agnc" tampil
 - [ ] `--print --yes "Where is agnc global config and how do I change workspace?"` — jawaban merujuk `~/.agnc.json` dan `AGNC_WORKSPACE`, bukan Claude Desktop
 
+## Skills (Fase 6.12)
+
+- [ ] Buat `.agnc/skills/test.md` dengan instruksi unik — model mengikutinya saat `--print`
+- [ ] `/skills` di REPL — daftar file; `/skills reload` setelah edit file
+- [ ] `agnc doctor` — baris `skills` menampilkan jumlah file
+
 ## Catatan
 
 - Test provider live (OpenRouter/Gemini) bersifat opsional; set `AGNC_TEST_LIVE_OPENROUTER=1` hanya saat regression eksplisit.

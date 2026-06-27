@@ -15,6 +15,7 @@
 #include "agnc/ctags_locate.h"
 #include "agnc/status.h"
 #include "agnc/tool_path.h"
+#include "agnc/skills.h"
 #include "agnc/version.h"
 
 #include <curl/curl.h>
@@ -167,6 +168,21 @@ int agnc_cli_run_doctor(void)
                 config.provider_id != NULL ? config.provider_id : "?",
                 config.gateway_id != NULL ? config.gateway_id : "?");
             agnc_doctor_print_status("provider_active", "ok", detail);
+
+            if (!config.skills_enabled) {
+                agnc_doctor_print_status("skills", "skipped", "disabled in config");
+            } else {
+                agnc_skill_entry_t *entries = NULL;
+                size_t skill_count = 0;
+
+                if (agnc_skills_list(&config, &entries, &skill_count) == AGNC_STATUS_OK) {
+                    snprintf(detail, sizeof(detail), "%zu skill file(s) loaded", skill_count);
+                    agnc_doctor_print_status("skills", skill_count > 0 ? "ok" : "missing", detail);
+                    agnc_skills_list_free(entries, skill_count);
+                } else {
+                    agnc_doctor_print_status("skills", "error", "cannot scan skill folders");
+                }
+            }
 
             if (config.mcp_server_count > 0) {
                 size_t server_index;

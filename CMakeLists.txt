@@ -35,6 +35,7 @@ add_executable(agnc
     src/engine/conversation.c
     src/engine/query.c
     src/engine/session.c
+    src/engine/skills.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c
@@ -187,6 +188,22 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_tool_cache)
 
     add_test(NAME test_tool_cache COMMAND test_tool_cache)
+
+    add_executable(test_skills
+        tests/test_skills.c
+        src/engine/skills.c
+        src/tools/tool_path.c
+        src/util/path.c
+    )
+
+    target_include_directories(test_skills PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_skills PRIVATE cmocka::cmocka)
+    agnc_set_compiler_warnings(test_skills)
+
+    add_test(NAME test_skills COMMAND test_skills)
 
     add_executable(test_provider_registry
         tests/test_provider_registry.c

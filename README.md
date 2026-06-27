@@ -76,6 +76,8 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/
 
 **Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis.
 
+**Skills:** file `.md` atau `*/SKILL.md` di `~/.agnc/skills` dan `.agnc/skills` dimuat ke system prompt. Konfigurasi `skills.enabled` / `skills.paths` di `~/.agnc.json`. REPL: `/skills`, `/skills reload`.
+
 Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
 Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: total N`). `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
@@ -171,4 +173,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.9** — lazy load, append-only sync, windowed LLM context: selesai
 - **Fase 6.10** — cache tool, `find_symbol` (ctags), grep truncate: selesai
 - **Fase 6.11a** — agent product context (config/workspace di system prompt): selesai
-- **Fase 6.12+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.12** — skills markdown ke system prompt: selesai
+- **Fase 6.13+** — sub-agent, OAuth, gRPC, hooks, TUI: backlog (lihat `roadmap.md`)
