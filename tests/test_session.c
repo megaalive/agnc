@@ -1,7 +1,7 @@
 /*
  * test_session.c
  *
- * Unit test save/load session JSON (Fase 4).
+ * Unit test save/load session SQLite (Fase 4 + 6.8).
  */
 
 #include "agnc/config.h"
@@ -37,12 +37,19 @@ static int setup_session_path(void **state)
     }
 
 #ifdef _WIN32
-    strncat(g_session_path, "\\agnc_session_test.json", sizeof(g_session_path) - strlen(g_session_path) - 1);
+    strncat(g_session_path, "\\agnc_session_test.sqlite", sizeof(g_session_path) - strlen(g_session_path) - 1);
 #else
-    strncat(g_session_path, "/agnc_session_test.json", sizeof(g_session_path) - strlen(g_session_path) - 1);
+    strncat(g_session_path, "/agnc_session_test.sqlite", sizeof(g_session_path) - strlen(g_session_path) - 1);
 #endif
 
     remove(g_session_path);
+    {
+        char legacy[1100];
+        snprintf(legacy, sizeof(legacy), "%.*s", (int)(sizeof(legacy) - 32), g_session_path);
+        legacy[strlen(legacy) - strlen(".sqlite")] = '\0';
+        strncat(legacy, ".json", sizeof(legacy) - strlen(legacy) - 1);
+        remove(legacy);
+    }
     return 0;
 }
 
@@ -50,6 +57,13 @@ static int teardown_session_path(void **state)
 {
     (void)state;
     remove(g_session_path);
+    {
+        char legacy[1100];
+        snprintf(legacy, sizeof(legacy), "%.*s", (int)(sizeof(legacy) - 32), g_session_path);
+        legacy[strlen(legacy) - strlen(".sqlite")] = '\0';
+        strncat(legacy, ".json", sizeof(legacy) - strlen(legacy) - 1);
+        remove(legacy);
+    }
     return 0;
 }
 
@@ -231,13 +245,13 @@ static void test_session_path_for_name(void **state)
 
     assert_int_equal(agnc_session_path_for_name("current", &path), AGNC_STATUS_OK);
     assert_non_null(path);
-    assert_true(strstr(path, "current.json") != NULL);
+    assert_true(strstr(path, "current.sqlite") != NULL);
     free(path);
 
     path = NULL;
     assert_int_equal(agnc_session_path_for_name("my-session", &path), AGNC_STATUS_OK);
     assert_non_null(path);
-    assert_true(strstr(path, "my-session.json") != NULL);
+    assert_true(strstr(path, "my-session.sqlite") != NULL);
     free(path);
 }
 
@@ -260,13 +274,13 @@ static void test_session_list_names(void **state)
 #ifdef _WIN32
     snprintf(session_dir, sizeof(session_dir), "%s\\agnc_session_list_test", dir);
     _mkdir(session_dir);
-    snprintf(path_a, sizeof(path_a), "%s\\alpha.json", session_dir);
-    snprintf(path_b, sizeof(path_b), "%s\\beta.json", session_dir);
+    snprintf(path_a, sizeof(path_a), "%s\\alpha.sqlite", session_dir);
+    snprintf(path_b, sizeof(path_b), "%s\\beta.sqlite", session_dir);
 #else
     snprintf(session_dir, sizeof(session_dir), "%s/agnc_session_list_test", dir);
     mkdir(session_dir, 0700);
-    snprintf(path_a, sizeof(path_a), "%s/alpha.json", session_dir);
-    snprintf(path_b, sizeof(path_b), "%s/beta.json", session_dir);
+    snprintf(path_a, sizeof(path_a), "%s/alpha.sqlite", session_dir);
+    snprintf(path_b, sizeof(path_b), "%s/beta.sqlite", session_dir);
 #endif
 
     file = fopen(path_a, "wb");
@@ -279,7 +293,7 @@ static void test_session_list_names(void **state)
 #ifdef _WIN32
     {
         char stale[640];
-        snprintf(stale, sizeof(stale), "%s\\gamma.json.tmp.1", session_dir);
+        snprintf(stale, sizeof(stale), "%s\\gamma.sqlite.tmp.1", session_dir);
         file = fopen(stale, "wb");
         assert_non_null(file);
         fclose(file);
@@ -297,13 +311,78 @@ static void test_session_list_names(void **state)
 #ifdef _WIN32
     {
         char stale[640];
-        snprintf(stale, sizeof(stale), "%s\\gamma.json.tmp.1", session_dir);
+        snprintf(stale, sizeof(stale), "%s\\gamma.sqlite.tmp.1", session_dir);
         remove(stale);
         _rmdir(session_dir);
     }
 #else
     rmdir(session_dir);
 #endif
+}
+
+static void test_session_migrate_json(void **state)
+{
+    agnc_conversation_t conversation;
+    agnc_conversation_t loaded;
+    agnc_config_t config;
+    char sqlite_path[1024];
+    char json_path[1024];
+    FILE *file;
+    agnc_status_t status;
+
+    (void)state;
+
+    if (getcwd(sqlite_path, sizeof(sqlite_path) - 64) == NULL) {
+        return;
+    }
+
+#ifdef _WIN32
+    strncat(sqlite_path, "\\agnc_session_migrate.sqlite", sizeof(sqlite_path) - strlen(sqlite_path) - 1);
+#else
+    strncat(sqlite_path, "/agnc_session_migrate.sqlite", sizeof(sqlite_path) - strlen(sqlite_path) - 1);
+#endif
+
+    snprintf(json_path, sizeof(json_path), "%.*s", (int)(sizeof(json_path) - 16), sqlite_path);
+    json_path[strlen(json_path) - strlen(".sqlite")] = '\0';
+    strncat(json_path, ".json", sizeof(json_path) - strlen(json_path) - 1);
+
+    remove(sqlite_path);
+    remove(json_path);
+
+    file = fopen(json_path, "wb");
+    assert_non_null(file);
+    fprintf(
+        file,
+        "{"
+        "\"provider_id\":\"openrouter\","
+        "\"model\":\"test/model\","
+        "\"messages\":[{\"role\":\"user\",\"content\":\"legacy\"}]"
+        "}");
+    fclose(file);
+
+    agnc_conversation_init(&conversation);
+    status = agnc_session_load(sqlite_path, &conversation, NULL, NULL);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(conversation.count, 1);
+    assert_string_equal(conversation.items[0].content, "legacy");
+    assert_int_equal(agnc_path_exists(sqlite_path), 1);
+    assert_int_equal(agnc_path_exists(json_path), 0);
+
+    agnc_conversation_init(&loaded);
+    agnc_config_init(&config);
+    assert_int_equal(agnc_conversation_push(&loaded, "user", "new", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_save(sqlite_path, &loaded, &config), AGNC_STATUS_OK);
+
+    agnc_conversation_clear(&conversation);
+    status = agnc_session_load(sqlite_path, &conversation, NULL, NULL);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(conversation.count, 1);
+    assert_string_equal(conversation.items[0].content, "new");
+
+    agnc_conversation_clear(&conversation);
+    agnc_conversation_clear(&loaded);
+    agnc_config_free(&config);
+    remove(sqlite_path);
 }
 
 static void test_session_active_name_roundtrip(void **state)
@@ -327,6 +406,39 @@ static void test_session_active_name_roundtrip(void **state)
     free(loaded);
 }
 
+static void test_session_delete_by_name(void **state)
+{
+    agnc_conversation_t conversation;
+    agnc_config_t config;
+    char *path = NULL;
+    agnc_status_t status;
+
+    (void)state;
+
+    agnc_conversation_init(&conversation);
+    agnc_config_init(&config);
+
+    assert_int_equal(agnc_session_path_for_name("delete-me-test", &path), AGNC_STATUS_OK);
+    assert_non_null(path);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "hello", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_save(path, &conversation, &config), AGNC_STATUS_OK);
+    assert_int_equal(agnc_path_exists(path), 1);
+
+    status = agnc_session_delete_by_name("delete-me-test");
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(agnc_path_exists(path), 0);
+
+    status = agnc_session_delete_by_name("delete-me-test");
+    assert_int_equal(status, AGNC_STATUS_IO_ERROR);
+
+    assert_int_equal(agnc_session_delete_by_name("bad name"), AGNC_STATUS_INVALID_ARGUMENT);
+
+    free(path);
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -339,6 +451,8 @@ int main(void)
         cmocka_unit_test(test_session_path_for_name),
         cmocka_unit_test(test_session_list_names),
         cmocka_unit_test(test_session_active_name_roundtrip),
+        cmocka_unit_test(test_session_delete_by_name),
+        cmocka_unit_test(test_session_migrate_json),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

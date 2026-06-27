@@ -1,8 +1,8 @@
 /*
  * session.c
  *
- * Persistensi riwayat chat ke ~/.agnc/sessions/<nama>.json.
- * Pointer sesi aktif di active.txt; simpan memakai atomic write.
+ * Persistensi riwayat chat ke ~/.agnc/sessions/<nama>.sqlite (1 sesi = 1 DB).
+ * Pointer sesi aktif di active.txt; migrasi otomatis dari .json legacy.
  */
 
 #include "agnc/session.h"
@@ -26,10 +26,28 @@
 #include <sys/stat.h>
 #endif
 
+#include <sqlite3.h>
 #include <yyjson.h>
 
 #define AGNC_SESSION_DEFAULT_NAME "current"
 #define AGNC_SESSION_NAME_MAX 48
+#define AGNC_SESSION_FILE_EXT ".sqlite"
+#define AGNC_SESSION_LEGACY_EXT ".json"
+
+#define AGNC_SESSION_SCHEMA \
+    "PRAGMA journal_mode=DELETE;" \
+    "CREATE TABLE IF NOT EXISTS meta (" \
+    "  key TEXT PRIMARY KEY NOT NULL," \
+    "  value TEXT" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS messages (" \
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT," \
+    "  role TEXT NOT NULL," \
+    "  content TEXT," \
+    "  tool_call_id TEXT," \
+    "  tool_name TEXT," \
+    "  tool_arguments TEXT" \
+    ");"
 
 static char *agnc_strdup_local(const char *value)
 {
@@ -40,14 +58,14 @@ static char *agnc_strdup_local(const char *value)
 #endif
 }
 
-/* File temp atomic write: <nama>.json.tmp atau <nama>.json.tmp.<pid>. */
+/* File temp: <nama>.sqlite.tmp atau legacy <nama>.json.tmp*. */
 static int agnc_session_is_stale_temp_name(const char *name)
 {
     if (name == NULL || name[0] == '\0') {
         return 0;
     }
 
-    return strstr(name, ".json.tmp") != NULL;
+    return strstr(name, ".sqlite.tmp") != NULL || strstr(name, ".json.tmp") != NULL;
 }
 
 #ifdef _WIN32
@@ -82,6 +100,26 @@ agnc_status_t agnc_session_cleanup_stale_temp_files_in_dir(const char *sessions_
         char pattern[1024];
         WIN32_FIND_DATAA data;
         HANDLE handle;
+
+        snprintf(pattern, sizeof(pattern), "%s\\*.sqlite.tmp*", sessions_dir);
+        handle = FindFirstFileA(pattern, &data);
+        if (handle != INVALID_HANDLE_VALUE) {
+            do {
+                char full_path[1024];
+
+                if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    continue;
+                }
+                if (agnc_session_is_active_process_temp(data.cFileName)) {
+                    continue;
+                }
+
+                snprintf(full_path, sizeof(full_path), "%s\\%s", sessions_dir, data.cFileName);
+                (void)remove(full_path);
+            } while (FindNextFileA(handle, &data));
+
+            FindClose(handle);
+        }
 
         snprintf(pattern, sizeof(pattern), "%s\\*.json.tmp*", sessions_dir);
         handle = FindFirstFileA(pattern, &data);
@@ -283,9 +321,9 @@ agnc_status_t agnc_session_path_for_name(const char *name, char **output)
     }
 
 #ifdef _WIN32
-    snprintf(path, strlen(dir) + strlen(session_name) + 16, "%s\\%s.json", dir, session_name);
+    snprintf(path, strlen(dir) + strlen(session_name) + 16, "%s\\%s%s", dir, session_name, AGNC_SESSION_FILE_EXT);
 #else
-    snprintf(path, strlen(dir) + strlen(session_name) + 16, "%s/%s.json", dir, session_name);
+    snprintf(path, strlen(dir) + strlen(session_name) + 16, "%s/%s%s", dir, session_name, AGNC_SESSION_FILE_EXT);
 #endif
 
     free(dir);
@@ -431,182 +469,185 @@ static int agnc_session_name_compare(const void *left, const void *right)
     return strcmp(a, b);
 }
 
-agnc_status_t agnc_session_list_names(const char *sessions_dir, char ***names_out, size_t *count_out)
-{
-    char **names = NULL;
-    size_t count = 0;
-    size_t capacity = 0;
-
-    if (sessions_dir == NULL || names_out == NULL || count_out == NULL) {
-        return AGNC_STATUS_INVALID_ARGUMENT;
-    }
-
-    *names_out = NULL;
-    *count_out = 0;
-
-    if (!agnc_path_exists(sessions_dir)) {
-        return AGNC_STATUS_OK;
-    }
-
-#ifdef _WIN32
-    {
-        char pattern[1024];
-        WIN32_FIND_DATAA data;
-        HANDLE handle;
-
-        snprintf(pattern, sizeof(pattern), "%s\\*.json", sessions_dir);
-        handle = FindFirstFileA(pattern, &data);
-        if (handle == INVALID_HANDLE_VALUE) {
-            return AGNC_STATUS_OK;
-        }
-
-        do {
-            const char *dot;
-            size_t base_len;
-            char *session_name;
-
-            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                continue;
-            }
-            if (agnc_session_is_stale_temp_name(data.cFileName)) {
-                continue;
-            }
-
-            dot = strrchr(data.cFileName, '.');
-            if (dot == NULL || strcmp(dot, ".json") != 0) {
-                continue;
-            }
-
-            base_len = (size_t)(dot - data.cFileName);
-            if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
-                continue;
-            }
-
-            session_name = (char *)malloc(base_len + 1);
-            if (session_name == NULL) {
-                agnc_session_list_names_free(names, count);
-                FindClose(handle);
-                return AGNC_STATUS_OUT_OF_MEMORY;
-            }
-
-            memcpy(session_name, data.cFileName, base_len);
-            session_name[base_len] = '\0';
-
-            if (count == capacity) {
-                char **grown;
-                size_t new_capacity = capacity == 0 ? 8 : capacity * 2;
-
-                grown = (char **)realloc(names, new_capacity * sizeof(*names));
-                if (grown == NULL) {
-                    free(session_name);
-                    agnc_session_list_names_free(names, count);
-                    FindClose(handle);
-                    return AGNC_STATUS_OUT_OF_MEMORY;
-                }
-
-                names = grown;
-                capacity = new_capacity;
-            }
-
-            names[count++] = session_name;
-        } while (FindNextFileA(handle, &data));
-
-        FindClose(handle);
-    }
-#else
-    {
-        DIR *dir = opendir(sessions_dir);
-
-        if (dir == NULL) {
-            return AGNC_STATUS_OK;
-        }
-
-        for (;;) {
-            struct dirent *entry = readdir(dir);
-            const char *dot;
-            size_t base_len;
-            char *session_name;
-
-            if (entry == NULL) {
-                break;
-            }
-            if (agnc_session_is_stale_temp_name(entry->d_name)) {
-                continue;
-            }
-
-            dot = strrchr(entry->d_name, '.');
-            if (dot == NULL || strcmp(dot, ".json") != 0) {
-                continue;
-            }
-
-            base_len = (size_t)(dot - entry->d_name);
-            if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
-                continue;
-            }
-
-            session_name = (char *)malloc(base_len + 1);
-            if (session_name == NULL) {
-                agnc_session_list_names_free(names, count);
-                closedir(dir);
-                return AGNC_STATUS_OUT_OF_MEMORY;
-            }
-
-            memcpy(session_name, entry->d_name, base_len);
-            session_name[base_len] = '\0';
-
-            if (count == capacity) {
-                char **grown;
-                size_t new_capacity = capacity == 0 ? 8 : capacity * 2;
-
-                grown = (char **)realloc(names, new_capacity * sizeof(*names));
-                if (grown == NULL) {
-                    free(session_name);
-                    agnc_session_list_names_free(names, count);
-                    closedir(dir);
-                    return AGNC_STATUS_OUT_OF_MEMORY;
-                }
-
-                names = grown;
-                capacity = new_capacity;
-            }
-
-            names[count++] = session_name;
-        }
-
-        closedir(dir);
-    }
-#endif
-
-    if (count > 1) {
-        qsort(names, count, sizeof(*names), agnc_session_name_compare);
-    }
-
-    *names_out = names;
-    *count_out = count;
-    return AGNC_STATUS_OK;
-}
-
-void agnc_session_list_names_free(char **names, size_t count)
+static int agnc_session_list_has_name(char **names, size_t count, const char *session_name)
 {
     size_t index;
 
-    if (names == NULL) {
-        return;
-    }
-
     for (index = 0; index < count; index++) {
-        free(names[index]);
+        if (names[index] != NULL && strcmp(names[index], session_name) == 0) {
+            return 1;
+        }
     }
 
-    free(names);
+    return 0;
 }
 
-agnc_status_t agnc_session_current_path(char **output)
+static agnc_status_t agnc_session_list_append_unique(
+    char ***names,
+    size_t *count,
+    size_t *capacity,
+    const char *session_name)
 {
-    return agnc_session_path_for_name(AGNC_SESSION_DEFAULT_NAME, output);
+    char *copy;
+    char **grown;
+
+    if (names == NULL || count == NULL || capacity == NULL || session_name == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (agnc_session_validate_name(session_name) != AGNC_STATUS_OK) {
+        return AGNC_STATUS_OK;
+    }
+
+    if (agnc_session_list_has_name(*names, *count, session_name)) {
+        return AGNC_STATUS_OK;
+    }
+
+    copy = agnc_strdup_local(session_name);
+    if (copy == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    if (*count == *capacity) {
+        size_t new_capacity = *capacity == 0 ? 8 : *capacity * 2;
+
+        grown = (char **)realloc(*names, new_capacity * sizeof(**names));
+        if (grown == NULL) {
+            free(copy);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+
+        *names = grown;
+        *capacity = new_capacity;
+    }
+
+    (*names)[(*count)++] = copy;
+    return AGNC_STATUS_OK;
 }
 
-agnc_status_t agnc_session_load(
+static agnc_status_t agnc_session_legacy_json_path(const char *sqlite_path, char **json_out)
+{
+    size_t length;
+    char *json_path;
+
+    if (sqlite_path == NULL || json_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *json_out = NULL;
+    length = strlen(sqlite_path);
+    if (length < strlen(AGNC_SESSION_FILE_EXT) ||
+        strcmp(sqlite_path + length - strlen(AGNC_SESSION_FILE_EXT), AGNC_SESSION_FILE_EXT) != 0) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    json_path = (char *)malloc(length + 8);
+    if (json_path == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    memcpy(json_path, sqlite_path, length - strlen(AGNC_SESSION_FILE_EXT));
+    json_path[length - strlen(AGNC_SESSION_FILE_EXT)] = '\0';
+    strcat(json_path, AGNC_SESSION_LEGACY_EXT);
+    *json_out = json_path;
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_session_sqlite_exec_simple(sqlite3 *db, const char *sql)
+{
+    char *error_message = NULL;
+    int rc;
+
+    rc = sqlite3_exec(db, sql, NULL, NULL, &error_message);
+    if (rc != SQLITE_OK) {
+        if (error_message != NULL) {
+            sqlite3_free(error_message);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_session_sqlite_bind_text_or_null(sqlite3_stmt *stmt, int index, const char *value)
+{
+    if (value != NULL) {
+        return sqlite3_bind_text(stmt, index, value, -1, SQLITE_TRANSIENT) == SQLITE_OK ? AGNC_STATUS_OK
+                                                                                          : AGNC_STATUS_IO_ERROR;
+    }
+
+    return sqlite3_bind_null(stmt, index) == SQLITE_OK ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+static agnc_status_t agnc_session_sqlite_meta_get(sqlite3 *db, const char *key, char **value_out)
+{
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status = AGNC_STATUS_OK;
+    int rc;
+
+    if (value_out != NULL) {
+        *value_out = NULL;
+    }
+
+    rc = sqlite3_prepare_v2(db, "SELECT value FROM meta WHERE key = ? LIMIT 1", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW && value_out != NULL) {
+        const unsigned char *text = sqlite3_column_text(stmt, 0);
+        if (text != NULL) {
+            *value_out = agnc_strdup_local((const char *)text);
+            if (*value_out == NULL) {
+                status = AGNC_STATUS_OUT_OF_MEMORY;
+            }
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return status;
+}
+
+static agnc_status_t agnc_session_sqlite_meta_set(sqlite3 *db, const char *key, const char *value)
+{
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status;
+    int rc;
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO meta(key, value) VALUES(?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_bind_text_or_null(stmt, 2, value);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_finalize(stmt);
+        return status;
+    }
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+static agnc_status_t agnc_session_load_json_file(
     const char *path,
     agnc_conversation_t *conversation,
     char **provider_id_out,
@@ -620,21 +661,6 @@ agnc_status_t agnc_session_load(
     yyjson_val *messages;
     size_t index;
     agnc_status_t status = AGNC_STATUS_OK;
-
-    if (path == NULL || conversation == NULL) {
-        return AGNC_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (provider_id_out != NULL) {
-        *provider_id_out = NULL;
-    }
-    if (model_out != NULL) {
-        *model_out = NULL;
-    }
-
-    if (!agnc_path_exists(path)) {
-        return AGNC_STATUS_IO_ERROR;
-    }
 
     file = fopen(path, "rb");
     if (file == NULL) {
@@ -721,76 +747,556 @@ agnc_status_t agnc_session_load(
     return status;
 }
 
-agnc_status_t agnc_session_save(
+static agnc_status_t agnc_session_write_sqlite_file(
     const char *path,
     const agnc_conversation_t *conversation,
     const agnc_config_t *config)
 {
-    yyjson_mut_doc *doc;
-    yyjson_mut_val *root;
-    yyjson_mut_val *messages;
-    char *json_text;
+    sqlite3 *db = NULL;
+    sqlite3_stmt *insert_stmt = NULL;
+    char saved_at[32];
     size_t index;
     agnc_status_t status;
+    int rc;
     time_t now;
+
+    rc = sqlite3_open(path, &db);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        (void)remove(path);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        (void)remove(path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "DELETE FROM messages") != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "DELETE FROM meta") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        (void)remove(path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    time(&now);
+    snprintf(saved_at, sizeof(saved_at), "%lld", (long long)now);
+    if (agnc_session_sqlite_meta_set(db, "saved_at", saved_at) != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        (void)remove(path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (config != NULL) {
+        if (config->provider_id != NULL &&
+            agnc_session_sqlite_meta_set(db, "provider_id", config->provider_id) != AGNC_STATUS_OK) {
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            (void)remove(path);
+            return AGNC_STATUS_IO_ERROR;
+        }
+        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "model", config->model) != AGNC_STATUS_OK) {
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            (void)remove(path);
+            return AGNC_STATUS_IO_ERROR;
+        }
+        if (config->gateway_id != NULL &&
+            agnc_session_sqlite_meta_set(db, "gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
+            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+            sqlite3_close(db);
+            (void)remove(path);
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments) "
+        "VALUES(?, ?, ?, ?, ?)",
+        -1,
+        &insert_stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        (void)remove(path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    for (index = 0; index < conversation->count; index++) {
+        const agnc_conversation_message_t *item = &conversation->items[index];
+
+        sqlite3_reset(insert_stmt);
+        sqlite3_clear_bindings(insert_stmt);
+
+        if (item->role == NULL || sqlite3_bind_text(insert_stmt, 1, item->role, -1, SQLITE_STATIC) != SQLITE_OK) {
+            status = AGNC_STATUS_IO_ERROR;
+            break;
+        }
+
+        status = agnc_session_sqlite_bind_text_or_null(insert_stmt, 2, item->content);
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_text_or_null(insert_stmt, 3, item->tool_call_id);
+        }
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_text_or_null(insert_stmt, 4, item->tool_name);
+        }
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_text_or_null(insert_stmt, 5, item->tool_arguments);
+        }
+        if (status != AGNC_STATUS_OK) {
+            break;
+        }
+
+        rc = sqlite3_step(insert_stmt);
+        if (rc != SQLITE_DONE) {
+            status = AGNC_STATUS_IO_ERROR;
+            break;
+        }
+    }
+
+    sqlite3_finalize(insert_stmt);
+
+    if (status != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+        sqlite3_close(db);
+        (void)remove(path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_close(db);
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_session_load_sqlite_file(
+    const char *path,
+    agnc_conversation_t *conversation,
+    char **provider_id_out,
+    char **model_out)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status = AGNC_STATUS_OK;
+    int rc;
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT role, content, tool_call_id, tool_name, tool_arguments "
+        "FROM messages ORDER BY id ASC",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    agnc_conversation_clear(conversation);
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *role = (const char *)sqlite3_column_text(stmt, 0);
+        const char *content = (const char *)sqlite3_column_text(stmt, 1);
+        const char *tool_call_id = (const char *)sqlite3_column_text(stmt, 2);
+        const char *tool_name = (const char *)sqlite3_column_text(stmt, 3);
+        const char *tool_arguments = (const char *)sqlite3_column_text(stmt, 4);
+
+        if (role == NULL) {
+            continue;
+        }
+
+        status = agnc_conversation_push(
+            conversation,
+            role,
+            content,
+            tool_call_id,
+            tool_name,
+            tool_arguments);
+        if (status != AGNC_STATUS_OK) {
+            break;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (status == AGNC_STATUS_OK && provider_id_out != NULL) {
+        status = agnc_session_sqlite_meta_get(db, "provider_id", provider_id_out);
+    }
+    if (status == AGNC_STATUS_OK && model_out != NULL) {
+        status = agnc_session_sqlite_meta_get(db, "model", model_out);
+    }
+
+    sqlite3_close(db);
+    return status;
+}
+
+static agnc_status_t agnc_session_migrate_json_file(const char *json_path, const char *sqlite_path)
+{
+    agnc_conversation_t conversation;
+    agnc_config_t config;
+    char *provider_id = NULL;
+    char *model = NULL;
+    char *gateway_id = NULL;
+    agnc_status_t status;
+
+    agnc_conversation_init(&conversation);
+    agnc_config_init(&config);
+
+    status = agnc_session_load_json_file(json_path, &conversation, &provider_id, &model);
+    if (status != AGNC_STATUS_OK) {
+        agnc_conversation_clear(&conversation);
+        agnc_config_free(&config);
+        return status;
+    }
+
+    config.provider_id = provider_id;
+    config.model = model;
+
+    {
+        FILE *file = fopen(json_path, "rb");
+        if (file != NULL) {
+            long size;
+            char *text;
+            yyjson_doc *doc;
+            yyjson_val *root;
+            yyjson_val *gateway;
+
+            if (fseek(file, 0, SEEK_END) == 0 && (size = ftell(file)) >= 0 && fseek(file, 0, SEEK_SET) == 0) {
+                text = (char *)malloc((size_t)size + 1);
+                if (text != NULL && fread(text, 1, (size_t)size, file) == (size_t)size) {
+                    text[size] = '\0';
+                    doc = yyjson_read(text, (size_t)size, 0);
+                    free(text);
+                    if (doc != NULL) {
+                        root = yyjson_doc_get_root(doc);
+                        gateway = yyjson_obj_get(root, "gateway_id");
+                        if (gateway != NULL && yyjson_is_str(gateway)) {
+                            gateway_id = agnc_strdup_local(yyjson_get_str(gateway));
+                            config.gateway_id = gateway_id;
+                        }
+                        yyjson_doc_free(doc);
+                    }
+                } else {
+                    free(text);
+                }
+            }
+            fclose(file);
+        }
+    }
+
+    status = agnc_session_write_sqlite_file(sqlite_path, &conversation, &config);
+    if (status == AGNC_STATUS_OK) {
+        (void)remove(json_path);
+    }
+
+    free(gateway_id);
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+    return status;
+}
+
+static agnc_status_t agnc_session_collect_names_with_ext(
+    const char *sessions_dir,
+    const char *extension,
+    int skip_if_sqlite_exists,
+    char ***names,
+    size_t *count,
+    size_t *capacity)
+{
+#ifdef _WIN32
+    char pattern[1024];
+    WIN32_FIND_DATAA data;
+    HANDLE handle;
+
+    snprintf(pattern, sizeof(pattern), "%s\\*%s", sessions_dir, extension);
+    handle = FindFirstFileA(pattern, &data);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return AGNC_STATUS_OK;
+    }
+
+    do {
+        const char *dot;
+        size_t base_len;
+        char session_name[AGNC_SESSION_NAME_MAX + 1];
+        char sqlite_path[1024];
+        agnc_status_t status;
+
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        if (agnc_session_is_stale_temp_name(data.cFileName)) {
+            continue;
+        }
+
+        dot = strrchr(data.cFileName, '.');
+        if (dot == NULL || strcmp(dot, extension) != 0) {
+            continue;
+        }
+
+        base_len = (size_t)(dot - data.cFileName);
+        if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
+            continue;
+        }
+
+        memcpy(session_name, data.cFileName, base_len);
+        session_name[base_len] = '\0';
+
+        if (skip_if_sqlite_exists) {
+            snprintf(sqlite_path, sizeof(sqlite_path), "%s\\%s%s", sessions_dir, session_name, AGNC_SESSION_FILE_EXT);
+            if (agnc_path_exists(sqlite_path)) {
+                continue;
+            }
+        }
+
+        status = agnc_session_list_append_unique(names, count, capacity, session_name);
+        if (status != AGNC_STATUS_OK) {
+            FindClose(handle);
+            return status;
+        }
+    } while (FindNextFileA(handle, &data));
+
+    FindClose(handle);
+#else
+    DIR *dir = opendir(sessions_dir);
+
+    if (dir == NULL) {
+        return AGNC_STATUS_OK;
+    }
+
+    for (;;) {
+        struct dirent *entry = readdir(dir);
+        const char *dot;
+        size_t base_len;
+        char session_name[AGNC_SESSION_NAME_MAX + 1];
+        char sqlite_path[1024];
+        agnc_status_t status;
+
+        if (entry == NULL) {
+            break;
+        }
+        if (agnc_session_is_stale_temp_name(entry->d_name)) {
+            continue;
+        }
+
+        dot = strrchr(entry->d_name, '.');
+        if (dot == NULL || strcmp(dot, extension) != 0) {
+            continue;
+        }
+
+        base_len = (size_t)(dot - entry->d_name);
+        if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
+            continue;
+        }
+
+        memcpy(session_name, entry->d_name, base_len);
+        session_name[base_len] = '\0';
+
+        if (skip_if_sqlite_exists) {
+            snprintf(sqlite_path, sizeof(sqlite_path), "%s/%s%s", sessions_dir, session_name, AGNC_SESSION_FILE_EXT);
+            if (agnc_path_exists(sqlite_path)) {
+                continue;
+            }
+        }
+
+        status = agnc_session_list_append_unique(names, count, capacity, session_name);
+        if (status != AGNC_STATUS_OK) {
+            closedir(dir);
+            return status;
+        }
+    }
+
+    closedir(dir);
+#endif
+
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_list_names(const char *sessions_dir, char ***names_out, size_t *count_out)
+{
+    char **names = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    agnc_status_t status;
+
+    if (sessions_dir == NULL || names_out == NULL || count_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *names_out = NULL;
+    *count_out = 0;
+
+    if (!agnc_path_exists(sessions_dir)) {
+        return AGNC_STATUS_OK;
+    }
+
+    status = agnc_session_collect_names_with_ext(
+        sessions_dir, AGNC_SESSION_FILE_EXT, 0, &names, &count, &capacity);
+    if (status != AGNC_STATUS_OK) {
+        agnc_session_list_names_free(names, count);
+        return status;
+    }
+
+    status = agnc_session_collect_names_with_ext(
+        sessions_dir, AGNC_SESSION_LEGACY_EXT, 1, &names, &count, &capacity);
+    if (status != AGNC_STATUS_OK) {
+        agnc_session_list_names_free(names, count);
+        return status;
+    }
+
+    if (count > 1) {
+        qsort(names, count, sizeof(*names), agnc_session_name_compare);
+    }
+
+    *names_out = names;
+    *count_out = count;
+    return AGNC_STATUS_OK;
+}
+
+void agnc_session_list_names_free(char **names, size_t count)
+{
+    size_t index;
+
+    if (names == NULL) {
+        return;
+    }
+
+    for (index = 0; index < count; index++) {
+        free(names[index]);
+    }
+
+    free(names);
+}
+
+agnc_status_t agnc_session_current_path(char **output)
+{
+    return agnc_session_path_for_name(AGNC_SESSION_DEFAULT_NAME, output);
+}
+
+agnc_status_t agnc_session_delete_by_name(const char *name)
+{
+    char *path = NULL;
+    char *json_path = NULL;
+    agnc_status_t status;
+    int existed = 0;
+
+    status = agnc_session_path_for_name(name, &path);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    if (agnc_path_exists(path)) {
+        existed = 1;
+        if (remove(path) != 0) {
+            free(path);
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    if (agnc_session_legacy_json_path(path, &json_path) == AGNC_STATUS_OK && agnc_path_exists(json_path)) {
+        existed = 1;
+        (void)remove(json_path);
+    }
+
+    free(json_path);
+    free(path);
+    return existed ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+agnc_status_t agnc_session_load(
+    const char *path,
+    agnc_conversation_t *conversation,
+    char **provider_id_out,
+    char **model_out)
+{
+    char *json_path = NULL;
+    agnc_status_t status;
 
     if (path == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    doc = yyjson_mut_doc_new(NULL);
-    if (doc == NULL) {
+    if (provider_id_out != NULL) {
+        *provider_id_out = NULL;
+    }
+    if (model_out != NULL) {
+        *model_out = NULL;
+    }
+
+    if (agnc_path_exists(path)) {
+        return agnc_session_load_sqlite_file(path, conversation, provider_id_out, model_out);
+    }
+
+    status = agnc_session_legacy_json_path(path, &json_path);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    if (!agnc_path_exists(json_path)) {
+        free(json_path);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_migrate_json_file(json_path, path);
+    free(json_path);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    return agnc_session_load_sqlite_file(path, conversation, provider_id_out, model_out);
+}
+
+agnc_status_t agnc_session_save(
+    const char *path,
+    const agnc_conversation_t *conversation,
+    const agnc_config_t *config)
+{
+    char *temp_path = NULL;
+    agnc_status_t status;
+
+    if (path == NULL || conversation == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    temp_path = (char *)malloc(strlen(path) + 8);
+    if (temp_path == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    root = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root);
+    snprintf(temp_path, strlen(path) + 8, "%s.tmp", path);
+    (void)remove(temp_path);
 
-    time(&now);
-    yyjson_mut_obj_add_int(doc, root, "saved_at", (int64_t)now);
-
-    if (config != NULL) {
-        if (config->provider_id != NULL) {
-            yyjson_mut_obj_add_str(doc, root, "provider_id", config->provider_id);
-        }
-        if (config->model != NULL) {
-            yyjson_mut_obj_add_str(doc, root, "model", config->model);
-        }
-        if (config->gateway_id != NULL) {
-            yyjson_mut_obj_add_str(doc, root, "gateway_id", config->gateway_id);
-        }
+    status = agnc_session_write_sqlite_file(temp_path, conversation, config);
+    if (status != AGNC_STATUS_OK) {
+        free(temp_path);
+        return status;
     }
 
-    messages = yyjson_mut_arr(doc);
-    yyjson_mut_obj_add_val(doc, root, "messages", messages);
-
-    for (index = 0; index < conversation->count; index++) {
-        const agnc_conversation_message_t *item = &conversation->items[index];
-        yyjson_mut_val *entry = yyjson_mut_obj(doc);
-
-        yyjson_mut_obj_add_str(doc, entry, "role", item->role);
-        if (item->content != NULL) {
-            yyjson_mut_obj_add_str(doc, entry, "content", item->content);
-        }
-        if (item->tool_call_id != NULL) {
-            yyjson_mut_obj_add_str(doc, entry, "tool_call_id", item->tool_call_id);
-        }
-        if (item->tool_name != NULL) {
-            yyjson_mut_obj_add_str(doc, entry, "tool_name", item->tool_name);
-        }
-        if (item->tool_arguments != NULL) {
-            yyjson_mut_obj_add_str(doc, entry, "tool_arguments", item->tool_arguments);
-        }
-        yyjson_mut_arr_append(messages, entry);
+    (void)remove(path);
+    if (rename(temp_path, path) != 0) {
+        (void)remove(temp_path);
+        free(temp_path);
+        return AGNC_STATUS_IO_ERROR;
     }
 
-    json_text = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY, NULL);
-    yyjson_mut_doc_free(doc);
-    if (json_text == NULL) {
-        return AGNC_STATUS_OUT_OF_MEMORY;
-    }
-
-    status = agnc_atomic_write_file(path, json_text, strlen(json_text));
-    free(json_text);
-    return status;
+    free(temp_path);
+    return AGNC_STATUS_OK;
 }

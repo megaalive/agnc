@@ -113,6 +113,7 @@ static void agnc_repl_print_help(void)
     printf("  /session           Daftar sesi tersimpan\n");
     printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
     printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
+    printf("  /session delete <nama>  Hapus file sesi dari disk\n");
     printf("  /doctor            Jalankan health check\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nCtrl+C saat request berjalan membatalkan tanpa keluar REPL.\n");
@@ -348,7 +349,8 @@ static agnc_status_t agnc_repl_switch_session(
     char **active_session_name,
     agnc_config_t *config,
     agnc_conversation_t *conversation,
-    int force_empty)
+    int force_empty,
+    int skip_save)
 {
     char *new_path = NULL;
     char *loaded_provider = NULL;
@@ -360,7 +362,7 @@ static agnc_status_t agnc_repl_switch_session(
         return status;
     }
 
-    if (*session_path != NULL) {
+    if (!skip_save && *session_path != NULL) {
         (void)agnc_session_save(*session_path, conversation, config);
     }
 
@@ -392,6 +394,42 @@ static agnc_status_t agnc_repl_switch_session(
     }
 
     return agnc_session_active_name_save(name);
+}
+
+static agnc_status_t agnc_repl_delete_session(
+    const char *name,
+    char **session_path,
+    char **active_session_name,
+    agnc_config_t *config,
+    agnc_conversation_t *conversation)
+{
+    char *path = NULL;
+    int is_active;
+    agnc_status_t status;
+
+    status = agnc_session_validate_name(name);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    status = agnc_session_path_for_name(name, &path);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+    free(path);
+
+    is_active = *active_session_name != NULL && strcmp(*active_session_name, name) == 0;
+    if (is_active) {
+        status = agnc_repl_switch_session(
+            "current", session_path, active_session_name, config, conversation, 1, 1);
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    } else if (*session_path != NULL) {
+        (void)agnc_session_save(*session_path, conversation, config);
+    }
+
+    return agnc_session_delete_by_name(name);
 }
 
 static int agnc_repl_handle_slash(
@@ -548,6 +586,31 @@ static int agnc_repl_handle_slash(
             return 1;
         }
 
+        if (strncmp(arg, "delete ", 7) == 0) {
+            const char *delete_name = arg + 7;
+            agnc_status_t delete_status;
+
+            while (*delete_name == ' ') {
+                delete_name++;
+            }
+            if (*delete_name == '\0') {
+                agnc_console_print_chat_system("session: nama wajib (/session delete <nama>)");
+                return 1;
+            }
+
+            delete_status = agnc_repl_delete_session(
+                delete_name, session_path, active_session_name, config, conversation);
+            if (delete_status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("session delete gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(delete_status));
+            } else {
+                char detail[80];
+                snprintf(detail, sizeof(detail), "sesi dihapus: %s", delete_name);
+                agnc_console_print_chat_system(detail);
+            }
+            return 1;
+        }
+
         if (strncmp(arg, "new ", 4) == 0) {
             const char *new_name = arg + 4;
             agnc_status_t switch_status;
@@ -561,7 +624,7 @@ static int agnc_repl_handle_slash(
             }
 
             switch_status = agnc_repl_switch_session(
-                new_name, session_path, active_session_name, config, conversation, 1);
+                new_name, session_path, active_session_name, config, conversation, 1, 0);
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session new gagal");
                 fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
@@ -575,7 +638,7 @@ static int agnc_repl_handle_slash(
 
         {
             agnc_status_t switch_status = agnc_repl_switch_session(
-                arg, session_path, active_session_name, config, conversation, 0);
+                arg, session_path, active_session_name, config, conversation, 0, 0);
 
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session gagal");

@@ -226,7 +226,7 @@ if(AGNC_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/generated
     )
 
-    target_link_libraries(test_session PRIVATE yyjson::yyjson cmocka::cmocka)
+    target_link_libraries(test_session PRIVATE yyjson::yyjson unofficial::sqlite3::sqlite3 cmocka::cmocka)
     agnc_set_compiler_warnings(test_session)
 
     add_test(NAME test_session COMMAND test_session)
