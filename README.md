@@ -68,13 +68,13 @@ Jalankan tanpa argumen untuk REPL chat dengan streaming:
 .\out\build\x64-Debug\agnc.exe
 ```
 
-Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/doctor`, `/exit`.
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/provider`, `/mcp`, `/session`, `/doctor`, `/exit`.
 
 **Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, dan wrap multi-baris — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`) dan sesi input konsol (`src/cli/console.c`). Di Unix fallback ke `fgets` dengan history.
 
 **Tampilan REPL:** blok chat ber-timestamp, warna (user hijau, kode abu-abu, sistem dim), spinner saat menunggu model, log aktivitas tool, prompt izin tool terintegrasi.
 
-**Session:** satu riwayat aktif di `%USERPROFILE%\.agnc\sessions\current.json`. Sisa file `current.json.tmp.*` dari simpan terputus dibersihkan otomatis saat REPL dibuka. Riwayat yang terlalu panjang diringkas otomatis.
+**Session:** multi-sesi bernama di `%USERPROFILE%\.agnc\sessions\<nama>.json`; pointer aktif di `active.txt`. Perintah `/session` (daftar), `/session <nama>` (pindah), `/session new <nama>` (sesi kosong). Sisa file `*.json.tmp.*` dari simpan terputus dibersihkan otomatis saat REPL dibuka. Riwayat yang terlalu panjang diringkas otomatis.
 
 Ctrl+C saat request berjalan membatalkan tanpa keluar REPL. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
@@ -163,4 +163,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.4** — modul konsol REPL Windows (input mentah, paste, permission terintegrasi): selesai
 - **Fase 6.5** — env MCP spawn, `always_deny`, shell safety, CI, smoke test: selesai
 - **Fase 6.6** — `/mcp`, token usage REPL, MCP auto-reconnect: selesai
-- **Fase 6.7+** — sub-agent, OAuth, gRPC, hooks, skills, TUI, multi-session: backlog (lihat `roadmap.md`)
+- **Fase 6.7** — multi-session REPL (`/session`): selesai
+- **Fase 6.7+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)

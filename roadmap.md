@@ -795,9 +795,9 @@ Status: **selesai** (Windows-first, 2026-06).
 
 - Mode interaktif default (`agnc` tanpa argumen) — REPL di `src/cli/repl.c`.
 - Streaming; render markdown sekali di akhir turn (bukan live duplikat).
-- Slash commands: `/help`, `/clear`, `/model`, `/provider`, `/doctor`, `/compact`, `/exit`.
-- Session tunggal: `~/.agnc/sessions/current.json` (`agnc_session_save` / `load`).
-- Bersihkan `current.json.tmp*` stale saat REPL startup (`agnc_session_cleanup_stale_temp_files`).
+- Slash commands: `/help`, `/clear`, `/model`, `/provider`, `/doctor`, `/compact`, `/mcp`, `/session`, `/exit`.
+- Multi-session: `~/.agnc/sessions/<nama>.json` + pointer `active.txt`; REPL `/session`, `/session <nama>`, `/session new <nama>`.
+- Bersihkan `*.json.tmp*` stale saat REPL startup (`agnc_session_cleanup_stale_temp_files`).
 - Auto-compact riwayat saat mendekati batas 64 pesan; truncate hasil tool besar.
 - System prompt menyertakan workspace root; diperbarui tiap request.
 - Permission/tool log di REPL ke stdout; spinner hanya saat tunggu HTTP.
@@ -865,6 +865,15 @@ Status: **selesai** (Windows-first, 2026-06).
 - Tool MCP yang gagal memicu reconnect otomatis sekali lalu retry call.
 - Test: `test_sse` (usage stream + non-stream).
 
+### 11.12 Fase 6.7 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Sesi bernama di `~/.agnc/sessions/<nama>.json`; pointer aktif di `active.txt`.
+- REPL: `/session` (daftar), `/session <nama>` (simpan + pindah + muat), `/session new <nama>` (sesi kosong).
+- Startup REPL memuat sesi dari `active.txt` (fallback `current`).
+- Test: `test_session` (validate name, path, list, active roundtrip).
+
 ## 12. Roadmap Fase
 
 ### 12.0 Urutan kerja pasca-Fase 5 (dikunci 2026-06)
@@ -878,7 +887,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.7+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI, multi-session | backlog |
+| **6. Fitur besar** (Fase 6.8+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -899,6 +908,14 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **6.6.1** | Slash `/mcp` + status server | **Selesai** |
 | **6.6.2** | Token usage per turn di REPL | **Selesai** |
 | **6.6.3** | MCP auto-reconnect saat tool call gagal | **Selesai** |
+
+### 12.3 Urutan kerja Fase 6.7 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.7.1** | API sesi bernama + `active.txt` + list | **Selesai** |
+| **6.7.2** | Slash `/session` di REPL | **Selesai** |
+| **6.7.3** | Test + docs + smoke test | **Selesai** |
 
 ### Fase 0: Bootstrap Repository (1-2 minggu)
 
@@ -1045,7 +1062,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.7+** sebelum **6.6** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.8+** sebelum **6.7** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1094,7 +1111,15 @@ Tasks:
 - Parse `usage` dari SSE; tampilkan token summary per turn. — `src/net/sse.c`, `query.c`, `repl.c`
 - MCP auto-reconnect + retry sekali saat `tools/call` gagal. — `query.c`, `session.c`
 
-#### Fase 6.7+ — Backlog fitur besar
+#### Fase 6.7 — Multi-session REPL — **selesai**
+
+Tasks:
+
+- API sesi bernama (`path_for_name`, `active.txt`, `list_names`). — `src/engine/session.c`
+- Slash `/session`, `/session <nama>`, `/session new <nama>`. — `src/cli/repl.c`
+- Test + smoke test multi-session.
+
+#### Fase 6.8+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

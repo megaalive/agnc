@@ -43,8 +43,9 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 
 ## Session
 
-- [ ] Tutup REPL setelah chat — `%USERPROFILE%\.agnc\sessions\current.json` berisi riwayat
-- [ ] Buka REPL lagi — riwayat dimuat
+- [ ] Tutup REPL setelah chat — `%USERPROFILE%\.agnc\sessions\<nama>.json` berisi riwayat (default `current.json`)
+- [ ] Buka REPL lagi — riwayat sesi aktif dimuat (`active.txt`)
+- [ ] `/session` — daftar sesi; `/session new test` lalu `/session current` — pindah sesi tanpa kehilangan riwayat
 
 ## Catatan
 

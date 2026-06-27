@@ -10,6 +10,7 @@
 #include "agnc/conversation.h"
 #include "agnc/line_edit.h"
 #include "agnc/mcp/session.h"
+#include "agnc/path.h"
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/query.h"
@@ -109,6 +110,9 @@ static void agnc_repl_print_help(void)
     printf("  /model [nama]      Tampilkan atau ganti model aktif\n");
     printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
     printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
+    printf("  /session           Daftar sesi tersimpan\n");
+    printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
+    printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
     printf("  /doctor            Jalankan health check\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nCtrl+C saat request berjalan membatalkan tanpa keluar REPL.\n");
@@ -273,11 +277,129 @@ static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
     return agnc_config_load(NULL, config);
 }
 
+static void agnc_repl_apply_loaded_session_meta(
+    agnc_config_t *config,
+    char *loaded_provider,
+    char *loaded_model)
+{
+    if (loaded_provider != NULL) {
+#ifdef _WIN32
+        _putenv_s("AGNC_PROVIDER", loaded_provider);
+#else
+        setenv("AGNC_PROVIDER", loaded_provider, 1);
+#endif
+        (void)agnc_repl_reload_config(config);
+    }
+    if (loaded_model != NULL) {
+        free(config->model);
+        config->model = loaded_model;
+        loaded_model = NULL;
+    }
+    free(loaded_provider);
+    free(loaded_model);
+}
+
+static void agnc_repl_compact_conversation_if_needed(agnc_conversation_t *conversation)
+{
+    size_t before = conversation->count;
+
+    (void)agnc_conversation_compact_if_needed(
+        conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
+    if (conversation->count < before) {
+        agnc_console_print_chat_system("riwayat lama diringkas otomatis");
+    }
+}
+
+static void agnc_repl_print_sessions(const char *active_name)
+{
+    char *dir = NULL;
+    char **names = NULL;
+    size_t count = 0;
+    size_t index;
+
+    if (agnc_session_default_dir(&dir) != AGNC_STATUS_OK) {
+        agnc_console_print_chat_system("session: gagal baca folder sesi");
+        return;
+    }
+
+    (void)agnc_session_list_names(dir, &names, &count);
+
+    printf("Sesi (aktif: %s):\n", active_name != NULL ? active_name : "current");
+    if (count == 0) {
+        printf("  (belum ada file sesi)\n");
+    } else {
+        for (index = 0; index < count; index++) {
+            const char *marker = "";
+
+            if (active_name != NULL && names[index] != NULL && strcmp(names[index], active_name) == 0) {
+                marker = " *";
+            }
+            printf("  %s%s\n", names[index], marker);
+        }
+    }
+
+    agnc_session_list_names_free(names, count);
+    free(dir);
+}
+
+static agnc_status_t agnc_repl_switch_session(
+    const char *name,
+    char **session_path,
+    char **active_session_name,
+    agnc_config_t *config,
+    agnc_conversation_t *conversation,
+    int force_empty)
+{
+    char *new_path = NULL;
+    char *loaded_provider = NULL;
+    char *loaded_model = NULL;
+    agnc_status_t status;
+
+    status = agnc_session_validate_name(name);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    if (*session_path != NULL) {
+        (void)agnc_session_save(*session_path, conversation, config);
+    }
+
+    status = agnc_session_path_for_name(name, &new_path);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    agnc_conversation_clear(conversation);
+
+    if (!force_empty && agnc_path_exists(new_path)) {
+        if (agnc_session_load(new_path, conversation, &loaded_provider, &loaded_model) == AGNC_STATUS_OK) {
+            agnc_repl_apply_loaded_session_meta(config, loaded_provider, loaded_model);
+            loaded_provider = NULL;
+            loaded_model = NULL;
+            agnc_repl_compact_conversation_if_needed(conversation);
+        }
+    } else {
+        (void)agnc_session_save(new_path, conversation, config);
+    }
+
+    free(*session_path);
+    *session_path = new_path;
+
+    free(*active_session_name);
+    *active_session_name = agnc_strdup_local(name);
+    if (*active_session_name == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    return agnc_session_active_name_save(name);
+}
+
 static int agnc_repl_handle_slash(
     char *line,
     agnc_config_t *config,
     agnc_conversation_t *conversation,
     char **session_path,
+    char **active_session_name,
     agnc_mcp_session_t *mcp_session)
 {
     const char *arg;
@@ -415,6 +537,58 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/session", 8) == 0) {
+        arg = line + 8;
+        while (*arg == ' ') {
+            arg++;
+        }
+
+        if (*arg == '\0') {
+            agnc_repl_print_sessions(*active_session_name);
+            return 1;
+        }
+
+        if (strncmp(arg, "new ", 4) == 0) {
+            const char *new_name = arg + 4;
+            agnc_status_t switch_status;
+
+            while (*new_name == ' ') {
+                new_name++;
+            }
+            if (*new_name == '\0') {
+                agnc_console_print_chat_system("session: nama wajib (/session new <nama>)");
+                return 1;
+            }
+
+            switch_status = agnc_repl_switch_session(
+                new_name, session_path, active_session_name, config, conversation, 1);
+            if (switch_status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("session new gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
+            } else {
+                char detail[80];
+                snprintf(detail, sizeof(detail), "sesi baru: %s", new_name);
+                agnc_console_print_chat_system(detail);
+            }
+            return 1;
+        }
+
+        {
+            agnc_status_t switch_status = agnc_repl_switch_session(
+                arg, session_path, active_session_name, config, conversation, 0);
+
+            if (switch_status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("session gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
+            } else {
+                char detail[80];
+                snprintf(detail, sizeof(detail), "sesi aktif: %s", arg);
+                agnc_console_print_chat_system(detail);
+            }
+        }
+        return 1;
+    }
+
     if (strncmp(line, "/doctor", 7) == 0) {
         agnc_console_print_chat_system("doctor");
         (void)agnc_cli_run_doctor();
@@ -441,6 +615,7 @@ int agnc_cli_run_interactive(void)
     agnc_mcp_session_t mcp_session;
     agnc_query_options_t options;
     char *session_path = NULL;
+    char *active_session_name = NULL;
     char line[AGNC_REPL_LINE_MAX];
     long usage_prompt = -1;
     long usage_completion = -1;
@@ -464,40 +639,22 @@ int agnc_cli_run_interactive(void)
     agnc_conversation_init(&conversation);
     agnc_mcp_session_init(&mcp_session);
     agnc_permission_session_reset();
-    status = agnc_session_current_path(&session_path);
+    status = agnc_session_active_name_load(&active_session_name);
+    if (status != AGNC_STATUS_OK || active_session_name == NULL) {
+        free(active_session_name);
+        active_session_name = agnc_strdup_local("current");
+    }
+    status = agnc_session_path_for_name(active_session_name, &session_path);
     if (status == AGNC_STATUS_OK && session_path != NULL) {
-        /* Sisa atomic write dari proses sebelumnya (current.json.tmp.*). */
+        /* Sisa atomic write dari proses sebelumnya (*.json.tmp.*). */
         (void)agnc_session_cleanup_stale_temp_files();
 
         char *loaded_provider = NULL;
         char *loaded_model = NULL;
 
         if (agnc_session_load(session_path, &conversation, &loaded_provider, &loaded_model) == AGNC_STATUS_OK) {
-            if (loaded_provider != NULL) {
-#ifdef _WIN32
-                _putenv_s("AGNC_PROVIDER", loaded_provider);
-#else
-                setenv("AGNC_PROVIDER", loaded_provider, 1);
-#endif
-                (void)agnc_repl_reload_config(&config);
-            }
-            if (loaded_model != NULL) {
-                free(config.model);
-                config.model = loaded_model;
-                loaded_model = NULL;
-            }
-            free(loaded_provider);
-            free(loaded_model);
-
-            {
-                size_t before = conversation.count;
-
-                (void)agnc_conversation_compact_if_needed(
-                    &conversation, AGNC_CONVERSATION_COMPACT_THRESHOLD, AGNC_CONVERSATION_COMPACT_KEEP);
-                if (conversation.count < before) {
-                    agnc_console_print_chat_system("riwayat lama diringkas otomatis");
-                }
-            }
+            agnc_repl_apply_loaded_session_meta(&config, loaded_provider, loaded_model);
+            agnc_repl_compact_conversation_if_needed(&conversation);
         }
     }
 
@@ -528,7 +685,7 @@ int agnc_cli_run_interactive(void)
             agnc_console_clear_input_line();
             {
                 int slash_result = agnc_repl_handle_slash(
-                    line, &config, &conversation, &session_path, &mcp_session);
+                    line, &config, &conversation, &session_path, &active_session_name, &mcp_session);
                 if (slash_result == 2) {
                     break;
                 }
@@ -573,6 +730,7 @@ int agnc_cli_run_interactive(void)
     }
 
     free(session_path);
+    free(active_session_name);
     agnc_mcp_session_free(&mcp_session);
     agnc_conversation_clear(&conversation);
     agnc_config_free(&config);
