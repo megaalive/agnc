@@ -11,7 +11,7 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 ## CLI dasar
 
 - [ ] `agnc --version` — cetak versi tanpa error
-- [ ] `agnc doctor` — config, curl, yyjson, rg (jika ada), MCP status OK atau skipped jelas
+- [ ] `agnc doctor` — config, curl, yyjson, rg (jika ada), ctags (jika ada), MCP status OK atau skipped jelas
 
 ## Mode headless `--print`
 
@@ -49,6 +49,12 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `/session delete test` — file sesi terhapus; jika sesi aktif, REPL pindah ke `current` kosong
 - [ ] Lazy load: buka REPL dengan sesi panjang — notifikasi "memuat N pesan terakhir" (bukan full history di RAM)
 - [ ] `/compact 24` — RAM + SQLite diringkas; file `.sqlite` lebih kecil setelah compact
+
+## Code lookup (Fase 6.10)
+
+- [ ] `agnc doctor` — `ctags` OK (Universal Ctags terpasang)
+- [ ] `--print --yes "Find symbol agnc_query_run in src using find_symbol tool"` — definisi di `query.c`
+- [ ] Panggil `grep` dua kali dengan argumen sama — hasil identik (cache sesi; cek via verbose log tidak re-spawn rg)
 
 ## Catatan
 

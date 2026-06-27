@@ -102,7 +102,7 @@ Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provid
 | `--print "prompt"` | Query headless ke provider |
 | `--no-tools` | Chat tanpa tool schema |
 | `--yes` / `-y` | Setujui otomatis: shell, tulis/edit file, MCP, `web_fetch` |
-| `doctor` | Cek config, libcurl, yyjson, ripgrep, koneksi MCP |
+| `doctor` | Cek config, libcurl, yyjson, ripgrep, ctags, koneksi MCP |
 | `--version` | Tampilkan versi |
 
 ### Tool bawaan
@@ -113,8 +113,9 @@ Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provid
 | `shell` | ask | PowerShell di Windows, output max 64 KB |
 | `write_file` | ask | Tulis atomik via temp+rename |
 | `edit_file` | ask | Ganti `old_string` unik → `new_string` |
-| `grep` | allow | Spawn `rg` (ripgrep), butuh di PATH |
-| `glob` | allow | Cari file by pola `*` / `?` |
+| `grep` | allow | Spawn `rg` (ripgrep), butuh di PATH; cache sesi |
+| `glob` | allow | Cari file by pola `*` / `?`; cache sesi |
+| `find_symbol` | allow | Lookup definisi simbol via ctags; cache sesi |
 | `web_fetch` | ask | HTTP GET, hasil ditruncate |
 | `todo_write` | allow | Catat daftar todo sesi (in-memory) |
 
@@ -128,7 +129,7 @@ Perintah shell destructive (mis. `rm -rf`, `format`) ditolak otomatis oleh safet
 
 Aktifkan server di `mcp.servers[]` di config (lihat `config/agnc.example.json`). Tool diekspos ke model dengan prefix `mcp_<id>_<tool>` (mis. `mcp_workspace-fs_read_file`). Koneksi MCP dipertahankan sepanjang sesi REPL. `agnc doctor` memeriksa `mcp_config` dan `mcp_connect`.
 
-**Dependency opsional:** tool `grep` membutuhkan [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) di PATH. Pasang lewat `winget install BurntSushi.ripgrep.MSVC` atau `scoop install ripgrep`, lalu cek dengan `agnc doctor`.
+**Dependency opsional:** tool `grep` membutuhkan [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) di PATH. Tool `find_symbol` membutuhkan [Universal Ctags](https://github.com/universal-ctags/ctags) (`ctags`). Pasang lewat `winget install BurntSushi.ripgrep.MSVC` / `scoop install ripgrep` / `scoop install universal-ctags`, lalu cek dengan `agnc doctor`.
 
 ## Unit test
 
@@ -166,4 +167,5 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.7** — multi-session REPL (`/session`): selesai
 - **Fase 6.8** — session SQLite (1 sesi = 1 file): selesai
 - **Fase 6.9** — lazy load, append-only sync, windowed LLM context: selesai
-- **Fase 6.10+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.10** — cache tool, `find_symbol` (ctags), grep truncate: selesai
+- **Fase 6.11+** — sub-agent, OAuth, gRPC, hooks, skills, TUI: backlog (lihat `roadmap.md`)

@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.10+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
+| **6. Fitur besar** (Fase 6.11+) | Sub-agent, OAuth, gRPC, hooks, skills, TUI | backlog |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -943,6 +943,23 @@ Status: **selesai** (Windows-first, 2026-06).
 | **6.8.1** | Dependency sqlite3 + schema per sesi | **Selesai** |
 | **6.8.2** | Save/load SQLite + migrasi JSON | **Selesai** |
 | **6.8.3** | Test + docs | **Selesai** |
+
+### 11.15 Fase 6.10 Acceptance
+
+Status: **selesai** (Windows-first, 2026-06).
+
+- Cache in-memory per sesi REPL untuk `grep`, `glob`, `read_file`, `find_symbol` (max 32 entri LRU).
+- Tool `find_symbol` via Universal Ctags; indeks simbol di-cache per workspace root.
+- Grep: konteks `-C 2`, max 100 match, output max 32 KB, header truncate jelas.
+- `agnc doctor` cek `ctags`; invalidasi cache setelah `write_file` / `edit_file`.
+
+### 12.6 Urutan kerja Fase 6.10 (dikunci 2026-06)
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.10.1** | `tool_cache.c` + integrasi `query.c` / `repl.c` | **Selesai** |
+| **6.10.2** | `find_symbol` + `ctags_locate.c` | **Selesai** |
+| **6.10.3** | Grep truncate + test/docs | **Selesai** |
 
 ### 12.5 Urutan kerja Fase 6.9 (dikunci 2026-06)
 
@@ -1097,7 +1114,7 @@ Exit criteria inti: Fase 5 Acceptance (B1–B5) — **terpenuhi**. B6 opsional s
 
 Tujuan: pemakaian harian nyaman, lalu mendekati pengalaman agent IDE penuh.
 
-Ikuti urutan §12.0. Jangan mulai **6.10+** sebelum **6.9** selesai.
+Ikuti urutan §12.0. Jangan mulai **6.11+** sebelum **6.10** selesai.
 
 #### Fase 6.1 — Stabilisasi MCP harian — **selesai**
 
@@ -1169,7 +1186,15 @@ Tasks:
 - Conversation dinamis; lazy load tail dari SQLite. — `conversation.c`, `session.c`
 - `agnc_session_sync` append-only; windowed context ke LLM. — `query.c`, `repl.c`
 
-#### Fase 6.10+ — Backlog fitur besar
+#### Fase 6.10 — Code lookup cache + find_symbol — **selesai**
+
+Tasks:
+
+- Cache tool read-only per sesi REPL. — `tool_cache.c`, `query.c`, `repl.c`
+- Tool `find_symbol` via ctags. — `find_symbol.c`, `ctags_locate.c`
+- Perbaikan grep truncate/konteks. — `grep.c`
+
+#### Fase 6.11+ — Backlog fitur besar
 
 Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
 

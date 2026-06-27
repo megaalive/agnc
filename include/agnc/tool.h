@@ -38,4 +38,10 @@ const char *agnc_tool_web_fetch_url_preview(const char *arguments_json);
 
 agnc_status_t agnc_tool_todo_write_execute(const char *arguments_json, char **result_text);
 
+agnc_status_t agnc_tool_find_symbol_execute(const char *arguments_json, char **result_text);
+const char *agnc_tool_find_symbol_name_preview(const char *arguments_json);
+
+/* Invalidasi indeks ctags in-memory (setelah write/edit atau reset sesi). */
+void agnc_find_symbol_index_invalidate(void);
+
 #endif

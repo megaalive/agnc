@@ -13,6 +13,7 @@
 #include "agnc/provider.h"
 #include "agnc/status.h"
 #include "agnc/tool.h"
+#include "agnc/tool_cache.h"
 #include "agnc/tool_path.h"
 #include "agnc/mcp/registry.h"
 #include "agnc/mcp/tools.h"
@@ -263,6 +264,36 @@ static void agnc_append_glob_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr
     agnc_schema_add_string_prop(doc, properties_obj, "pattern", "Glob pattern such as *.c or **/*.h.");
     agnc_schema_add_string_prop(doc, properties_obj, "path", "Directory to search (default .).");
     yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "pattern"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_find_symbol_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "find_symbol");
+    yyjson_mut_obj_add_str(
+        doc,
+        function_obj,
+        "description",
+        "Find function/type/variable definitions by symbol name using ctags (fast lookup).");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "name", "Symbol name to find (e.g. agnc_query_run).");
+    agnc_schema_add_string_prop(
+        doc,
+        properties_obj,
+        "path",
+        "Optional path prefix filter (default .). Use src to limit to source folder.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "name"));
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
@@ -544,6 +575,9 @@ static char *agnc_build_request_json(
         if (config->tool_glob) {
             agnc_append_glob_tool(doc, tools_arr);
         }
+        if (config->tool_find_symbol) {
+            agnc_append_find_symbol_tool(doc, tools_arr);
+        }
         if (config->tool_web_fetch) {
             agnc_append_web_fetch_tool(doc, tools_arr);
         }
@@ -573,6 +607,18 @@ static void agnc_query_log_tool_line(const agnc_config_t *config, int interactiv
     }
 }
 
+static void agnc_execute_tool_invalidate_cache(const char *tool_name, agnc_status_t status)
+{
+    if (status != AGNC_STATUS_OK) {
+        return;
+    }
+
+    if (strcmp(tool_name, "write_file") == 0 || strcmp(tool_name, "edit_file") == 0) {
+        agnc_tool_cache_reset();
+        agnc_find_symbol_index_invalidate();
+    }
+}
+
 static agnc_status_t agnc_execute_tool(
     const agnc_config_t *config,
     const char *tool_name,
@@ -589,9 +635,18 @@ static agnc_status_t agnc_execute_tool(
 
     *tool_result = NULL;
 
+    if (agnc_tool_cache_is_eligible(tool_name) &&
+        agnc_tool_cache_get(tool_name, tool_arguments, tool_result)) {
+        return AGNC_STATUS_OK;
+    }
+
     if (strcmp(tool_name, "read_file") == 0) {
         agnc_query_log_tool_line(config, interactive_repl, "read_file");
-        return agnc_tool_read_file_execute(tool_arguments, tool_result);
+        status = agnc_tool_read_file_execute(tool_arguments, tool_result);
+        if (status == AGNC_STATUS_OK) {
+            (void)agnc_tool_cache_put(tool_name, tool_arguments, *tool_result);
+        }
+        return status;
     }
 
     if (strcmp(tool_name, "shell") == 0) {
@@ -658,7 +713,9 @@ static agnc_status_t agnc_execute_tool(
                 return AGNC_STATUS_TOOL_FAILED;
             }
         }
-        return agnc_tool_write_file_execute(tool_arguments, tool_result);
+        status = agnc_tool_write_file_execute(tool_arguments, tool_result);
+        agnc_execute_tool_invalidate_cache(tool_name, status);
+        return status;
     }
 
     if (strcmp(tool_name, "edit_file") == 0) {
@@ -683,7 +740,9 @@ static agnc_status_t agnc_execute_tool(
                 return AGNC_STATUS_TOOL_FAILED;
             }
         }
-        return agnc_tool_edit_file_execute(tool_arguments, tool_result);
+        status = agnc_tool_edit_file_execute(tool_arguments, tool_result);
+        agnc_execute_tool_invalidate_cache(tool_name, status);
+        return status;
     }
 
     if (strcmp(tool_name, "grep") == 0) {
@@ -692,7 +751,11 @@ static agnc_status_t agnc_execute_tool(
 
         snprintf(tool_line, sizeof(tool_line), "grep: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
-        return agnc_tool_grep_execute(tool_arguments, tool_result);
+        status = agnc_tool_grep_execute(tool_arguments, tool_result);
+        if (status == AGNC_STATUS_OK) {
+            (void)agnc_tool_cache_put(tool_name, tool_arguments, *tool_result);
+        }
+        return status;
     }
 
     if (strcmp(tool_name, "glob") == 0) {
@@ -701,7 +764,24 @@ static agnc_status_t agnc_execute_tool(
 
         snprintf(tool_line, sizeof(tool_line), "glob: %s", preview != NULL ? preview : "(empty)");
         agnc_query_log_tool_line(config, interactive_repl, tool_line);
-        return agnc_tool_glob_execute(tool_arguments, tool_result);
+        status = agnc_tool_glob_execute(tool_arguments, tool_result);
+        if (status == AGNC_STATUS_OK) {
+            (void)agnc_tool_cache_put(tool_name, tool_arguments, *tool_result);
+        }
+        return status;
+    }
+
+    if (strcmp(tool_name, "find_symbol") == 0) {
+        const char *preview = agnc_tool_find_symbol_name_preview(tool_arguments);
+        char tool_line[512];
+
+        snprintf(tool_line, sizeof(tool_line), "find_symbol: %s", preview != NULL ? preview : "(empty)");
+        agnc_query_log_tool_line(config, interactive_repl, tool_line);
+        status = agnc_tool_find_symbol_execute(tool_arguments, tool_result);
+        if (status == AGNC_STATUS_OK) {
+            (void)agnc_tool_cache_put(tool_name, tool_arguments, *tool_result);
+        }
+        return status;
     }
 
     if (strncmp(tool_name, "mcp_", 4) == 0) {
@@ -936,7 +1016,8 @@ const char *agnc_query_default_system_prompt(int enable_tools, int search_only)
         }
         return "You are a helpful coding assistant on Windows. "
                "For code/text search use the grep tool (ripgrep), never shell findstr/find/rg/where. "
-               "For file name patterns use glob. Use read_file, write_file, edit_file for file content. "
+               "For symbol definitions (functions, types) use find_symbol; for file name patterns use glob. "
+               "Use read_file, write_file, edit_file for file content. "
                "Use shell only for directory listings with short commands like `dir` (avoid recursive -R). "
                "Paths like src/ resolve from repo root even when cwd is a build subfolder. "
                "For directory or file listings use a bullet or numbered list with one path or name per line; "

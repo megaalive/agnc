@@ -4,6 +4,7 @@
  * Unit test resolusi path dan validasi workspace tool.
  */
 
+#include "agnc/ctags_locate.h"
 #include "agnc/rg_locate.h"
 #include "agnc/tool.h"
 #include "agnc/tool_path.h"
@@ -118,6 +119,25 @@ static void test_grep_finds_in_src(void **state)
     free(result);
 }
 
+static void test_find_symbol_finds_query_run(void **state)
+{
+    const char *json = "{\"name\":\"agnc_query_run\",\"path\":\"src\"}";
+    char *result = NULL;
+    agnc_status_t status;
+    (void)state;
+
+    if (agnc_ctags_locate_binary() == NULL) {
+        skip();
+    }
+
+    status = agnc_tool_find_symbol_execute(json, &result);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_non_null(result);
+    assert_true(strstr(result, "agnc_query_run") != NULL);
+    free(result);
+    agnc_find_symbol_index_invalidate();
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -125,6 +145,7 @@ int main(void)
         cmocka_unit_test(test_path_validate_workspace),
         cmocka_unit_test(test_write_and_edit_roundtrip),
         cmocka_unit_test(test_grep_finds_in_src),
+        cmocka_unit_test(test_find_symbol_finds_query_run),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

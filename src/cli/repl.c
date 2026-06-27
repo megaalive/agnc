@@ -15,6 +15,8 @@
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/session.h"
+#include "agnc/tool.h"
+#include "agnc/tool_cache.h"
 
 #include "agnc_integrations_gen.h"
 
@@ -716,6 +718,8 @@ int agnc_cli_run_interactive(void)
     agnc_conversation_init(&conversation);
     agnc_mcp_session_init(&mcp_session);
     agnc_permission_session_reset();
+    agnc_tool_cache_reset();
+    agnc_find_symbol_index_invalidate();
     status = agnc_session_active_name_load(&active_session_name);
     if (status != AGNC_STATUS_OK || active_session_name == NULL) {
         free(active_session_name);

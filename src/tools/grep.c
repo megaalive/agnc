@@ -17,7 +17,8 @@
 #include <process.h>
 #endif
 
-#define AGNC_GREP_MAX_OUTPUT (64 * 1024)
+#define AGNC_GREP_MAX_OUTPUT (32 * 1024)
+#define AGNC_GREP_MAX_MATCHES 100
 
 static char *agnc_strdup_local(const char *value)
 {
@@ -76,6 +77,11 @@ static agnc_status_t agnc_grep_parse(const char *arguments_json, char **pattern_
     return AGNC_STATUS_OK;
 }
 
+static int agnc_grep_pattern_is_safe(const char *pattern)
+{
+    return pattern != NULL && strchr(pattern, '"') == NULL;
+}
+
 static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_path, char **result_text)
 {
     const char *rg_binary;
@@ -96,18 +102,25 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
         return AGNC_STATUS_TOOL_FAILED;
     }
 
-    command_len = strlen(rg_binary) + strlen(pattern) + strlen(search_path) + 192;
+    command_len = strlen(rg_binary) + strlen(pattern) + strlen(search_path) + 256;
     command = (char *)malloc(command_len);
     if (command == NULL) {
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    /* _popen di Windows lewat cmd.exe; hindari quote ganda yang merusak path. */
+    if (!agnc_grep_pattern_is_safe(pattern)) {
+        free(command);
+        *result_text = agnc_strdup_local("error: pattern must not contain double quotes");
+        return AGNC_STATUS_TOOL_FAILED;
+    }
+
+    /* _popen di Windows lewat cmd.exe; quote pattern dan path agar spasi aman. */
     snprintf(
         command,
         command_len,
-        "%s --no-heading --line-number --max-count 200 %s %s 2>&1",
+        "%s --no-heading --line-number -C 2 --max-count %d \"%s\" \"%s\" 2>&1",
         rg_binary,
+        AGNC_GREP_MAX_MATCHES,
         pattern,
         search_path);
 
@@ -195,7 +208,10 @@ static agnc_status_t agnc_grep_run_rg(const char *pattern, const char *search_pa
     }
 
     {
-        static const char header[] = "grep results (complete; do not call shell findstr):\n";
+        static const char header[] =
+            "grep results (max "
+            "100"
+            " matches, 2 lines context; output may truncate at 32KB):\n";
         size_t header_len = sizeof(header) - 1;
         char *formatted;
 

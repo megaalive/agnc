@@ -456,10 +456,12 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
             config->tool_glob = agnc_config_json_array_contains(enabled, "glob");
             config->tool_web_fetch = agnc_config_json_array_contains(enabled, "web_fetch");
             config->tool_todo_write = agnc_config_json_array_contains(enabled, "todo_write");
+            config->tool_find_symbol = agnc_config_json_array_contains(enabled, "find_symbol");
             config->enable_tools = config->tool_read_file || config->tool_shell ||
                                    config->tool_write_file || config->tool_edit_file ||
                                    config->tool_grep || config->tool_glob ||
-                                   config->tool_web_fetch || config->tool_todo_write;
+                                   config->tool_web_fetch || config->tool_todo_write ||
+                                   config->tool_find_symbol;
         }
     }
 
@@ -760,6 +762,7 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_glob = 1;
     config->tool_web_fetch = 0;
     config->tool_todo_write = 0;
+    config->tool_find_symbol = 1;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;

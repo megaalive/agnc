@@ -12,6 +12,7 @@
 #include "agnc/path.h"
 #include "agnc/provider.h"
 #include "agnc/rg_locate.h"
+#include "agnc/ctags_locate.h"
 #include "agnc/status.h"
 #include "agnc/version.h"
 
@@ -104,6 +105,17 @@ int agnc_cli_run_doctor(void)
             agnc_doctor_print_status("ripgrep", "ok", rg_path);
         } else {
             agnc_doctor_print_status("ripgrep", "missing", "install ripgrep for grep tool");
+        }
+    }
+
+    /* Universal Ctags diperlukan tool find_symbol (Fase 6.10). */
+    {
+        const char *ctags_path = agnc_ctags_locate_binary();
+
+        if (ctags_path != NULL && ctags_path[0] != '\0') {
+            agnc_doctor_print_status("ctags", "ok", ctags_path);
+        } else {
+            agnc_doctor_print_status("ctags", "missing", "install Universal Ctags for find_symbol");
         }
     }
 

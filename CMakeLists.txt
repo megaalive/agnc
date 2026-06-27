@@ -45,7 +45,10 @@ add_executable(agnc
     src/tools/edit_file.c
     src/tools/grep.c
     src/tools/rg_locate.c
+    src/tools/ctags_locate.c
+    src/tools/find_symbol.c
     src/tools/glob.c
+    src/engine/tool_cache.c
     src/tools/web_fetch.c
     src/tools/todo_write.c
     src/mcp/client.c
@@ -156,6 +159,8 @@ if(AGNC_BUILD_TESTS)
         src/tools/edit_file.c
         src/tools/grep.c
         src/tools/rg_locate.c
+        src/tools/ctags_locate.c
+        src/tools/find_symbol.c
         src/util/atomic_write.c
     )
 
@@ -167,6 +172,20 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_tool_path)
 
     add_test(NAME test_tool_path COMMAND test_tool_path)
+
+    add_executable(test_tool_cache
+        tests/test_tool_cache.c
+        src/engine/tool_cache.c
+    )
+
+    target_include_directories(test_tool_cache PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_tool_cache PRIVATE cmocka::cmocka)
+    agnc_set_compiler_warnings(test_tool_cache)
+
+    add_test(NAME test_tool_cache COMMAND test_tool_cache)
 
     add_executable(test_provider_registry
         tests/test_provider_registry.c
