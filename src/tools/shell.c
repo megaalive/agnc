@@ -13,8 +13,9 @@
 
 #include <yyjson.h>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 #endif
 
 #define AGNC_SHELL_MAX_OUTPUT (64 * 1024)
@@ -165,9 +166,80 @@ static agnc_status_t agnc_shell_parse_command(const char *arguments_json, char *
 }
 
 #ifdef _WIN32
+static char *agnc_shell_base64_encode_bytes(const unsigned char *data, size_t len)
+{
+    static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_len = 4 * ((len + 2) / 3);
+    char *out;
+    size_t index;
+    size_t out_index = 0;
+
+    if (data == NULL) {
+        return NULL;
+    }
+
+    out = (char *)malloc(out_len + 1);
+    if (out == NULL) {
+        return NULL;
+    }
+
+    for (index = 0; index < len; index += 3) {
+        unsigned long chunk = (unsigned long)data[index] << 16;
+        size_t remain = len - index;
+
+        if (remain > 1) {
+            chunk |= (unsigned long)data[index + 1] << 8;
+        }
+        if (remain > 2) {
+            chunk |= (unsigned long)data[index + 2];
+        }
+
+        out[out_index++] = alphabet[(chunk >> 18) & 0x3F];
+        out[out_index++] = alphabet[(chunk >> 12) & 0x3F];
+        out[out_index++] = remain > 1 ? alphabet[(chunk >> 6) & 0x3F] : '=';
+        out[out_index++] = remain > 2 ? alphabet[chunk & 0x3F] : '=';
+    }
+
+    out[out_len] = '\0';
+    return out;
+}
+
+static char *agnc_shell_powershell_encoded_command(const char *command)
+{
+    int wide_len;
+    wchar_t *wide = NULL;
+    char *encoded = NULL;
+
+    if (command == NULL) {
+        return NULL;
+    }
+
+    wide_len = MultiByteToWideChar(CP_UTF8, 0, command, -1, NULL, 0);
+    if (wide_len <= 1) {
+        return NULL;
+    }
+
+    wide = (wchar_t *)malloc((size_t)wide_len * sizeof(wchar_t));
+    if (wide == NULL) {
+        return NULL;
+    }
+
+    if (MultiByteToWideChar(CP_UTF8, 0, command, -1, wide, wide_len) <= 0) {
+        free(wide);
+        return NULL;
+    }
+
+    encoded = agnc_shell_base64_encode_bytes(
+        (const unsigned char *)wide,
+        (size_t)(wide_len - 1) * sizeof(wchar_t));
+    free(wide);
+    return encoded;
+}
+
 static agnc_status_t agnc_shell_run_powershell(const char *command, char **result_text)
 {
-    char *shell_line;
+    char *encoded = NULL;
+    char *shell_line = NULL;
     size_t shell_line_len;
     FILE *pipe;
     char buffer[4096];
@@ -176,17 +248,24 @@ static agnc_status_t agnc_shell_run_powershell(const char *command, char **resul
     size_t read_size;
     int truncated = 0;
 
-    shell_line_len = strlen(command) + 64;
+    encoded = agnc_shell_powershell_encoded_command(command);
+    if (encoded == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    shell_line_len = strlen(encoded) + 96;
     shell_line = (char *)malloc(shell_line_len);
     if (shell_line == NULL) {
+        free(encoded);
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
     snprintf(
         shell_line,
         shell_line_len,
-        "powershell.exe -NoProfile -NonInteractive -Command \"%s\" 2>&1",
-        command);
+        "powershell.exe -NoProfile -NonInteractive -EncodedCommand %s 2>&1",
+        encoded);
+    free(encoded);
 
     pipe = _popen(shell_line, "rt");
     free(shell_line);

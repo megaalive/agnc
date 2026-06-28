@@ -212,6 +212,27 @@ static void test_sse_stream_usage(void **state)
     agnc_sse_parser_free(&parser);
 }
 
+static void test_multiple_tool_calls_non_stream(void **state)
+{
+    agnc_sse_parser_t parser;
+    const char *payload =
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":["
+        "{\"id\":\"call_w\",\"type\":\"function\",\"function\":{\"name\":\"write_file\","
+        "\"arguments\":\"{\\\"path\\\":\\\"a.py\\\"}\"}},"
+        "{\"id\":\"call_s\",\"type\":\"function\",\"function\":{\"name\":\"shell\","
+        "\"arguments\":\"{\\\"command\\\":\\\"python a.py\\\"}\"}}"
+        "]}}]}";
+    (void)state;
+
+    agnc_sse_parser_init(&parser, 0, 0);
+    assert_int_equal(agnc_sse_parser_feed(&parser, payload, strlen(payload)), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_flush(&parser), AGNC_STATUS_OK);
+    assert_int_equal(agnc_sse_parser_get_tool_call_count(&parser), 2);
+    assert_string_equal(agnc_sse_parser_get_tool_call(&parser, 0)->name, "write_file");
+    assert_string_equal(agnc_sse_parser_get_tool_call(&parser, 1)->name, "shell");
+    agnc_sse_parser_free(&parser);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -222,6 +243,7 @@ int main(void)
         cmocka_unit_test(test_sse_incremental_deltas),
         cmocka_unit_test(test_sse_incremental_mid_word),
         cmocka_unit_test(test_tool_call_non_stream),
+        cmocka_unit_test(test_multiple_tool_calls_non_stream),
         cmocka_unit_test(test_split_chunk_boundary),
         cmocka_unit_test(test_provider_error_payload),
         cmocka_unit_test(test_reasoning_separate_from_content),

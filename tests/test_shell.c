@@ -74,12 +74,30 @@ static void test_shell_blocks_dangerous_commands(void **state)
     free(result);
 }
 
+static void test_shell_runs_python_inline_quotes(void **state)
+{
+    char *result = NULL;
+    agnc_status_t status;
+    (void)state;
+
+#ifdef _WIN32
+    status = agnc_tool_shell_execute("{\"command\":\"python -c \\\"print('agnc-shell-ok')\\\"\"}", &result);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_non_null(result);
+    assert_non_null(strstr(result, "agnc-shell-ok"));
+    free(result);
+#else
+    skip();
+#endif
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_shell_truncates_large_output),
         cmocka_unit_test(test_shell_blocks_findstr),
         cmocka_unit_test(test_shell_blocks_dangerous_commands),
+        cmocka_unit_test(test_shell_runs_python_inline_quotes),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

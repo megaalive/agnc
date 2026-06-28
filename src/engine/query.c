@@ -35,7 +35,115 @@
 #include <yyjson.h>
 
 #define AGNC_TOOL_RESULT_MAX 6000
+#define AGNC_QUERY_LOOP_REPEAT_MAX 3
 #define AGNC_MCP_TIMEOUT_MS 30000
+
+typedef struct {
+    char *tool_name;
+    char *arguments;
+    char *last_result;
+    int repeat_count;
+} agnc_query_loop_guard_t;
+
+static char *agnc_strdup_local(const char *value)
+{
+#ifdef _MSC_VER
+    return _strdup(value);
+#else
+    return strdup(value);
+#endif
+}
+
+static void agnc_query_loop_guard_init(agnc_query_loop_guard_t *guard)
+{
+    if (guard == NULL) {
+        return;
+    }
+
+    guard->tool_name = NULL;
+    guard->arguments = NULL;
+    guard->last_result = NULL;
+    guard->repeat_count = 0;
+}
+
+static void agnc_query_loop_guard_clear(agnc_query_loop_guard_t *guard)
+{
+    if (guard == NULL) {
+        return;
+    }
+
+    free(guard->tool_name);
+    free(guard->arguments);
+    free(guard->last_result);
+    guard->tool_name = NULL;
+    guard->arguments = NULL;
+    guard->last_result = NULL;
+    guard->repeat_count = 0;
+}
+
+static int agnc_query_loop_guard_is_blocked(
+    agnc_query_loop_guard_t *guard,
+    const char *tool_name,
+    const char *arguments,
+    char **tool_result_out)
+{
+    const char *args_key = arguments != NULL ? arguments : "{}";
+
+    if (guard == NULL || tool_name == NULL || tool_result_out == NULL) {
+        return 0;
+    }
+
+    *tool_result_out = NULL;
+
+    if (guard->tool_name != NULL && guard->arguments != NULL && strcmp(guard->tool_name, tool_name) == 0 &&
+        strcmp(guard->arguments, args_key) == 0) {
+        guard->repeat_count++;
+    } else {
+        free(guard->tool_name);
+        free(guard->arguments);
+        free(guard->last_result);
+        guard->tool_name = agnc_strdup_local(tool_name);
+        guard->arguments = agnc_strdup_local(args_key);
+        guard->last_result = NULL;
+        guard->repeat_count = 1;
+        return 0;
+    }
+
+    if (guard->repeat_count < AGNC_QUERY_LOOP_REPEAT_MAX) {
+        return 0;
+    }
+
+    if (guard->last_result != NULL && guard->last_result[0] != '\0') {
+        size_t body_len = strlen(guard->last_result);
+        char *msg = (char *)malloc(body_len + 256);
+
+        if (msg != NULL) {
+            snprintf(
+                msg,
+                body_len + 256,
+                "error: identical tool call repeated %d times; stop retrying and answer the user in plain text. "
+                "Previous output:\n%s",
+                guard->repeat_count,
+                guard->last_result);
+            *tool_result_out = msg;
+            return 1;
+        }
+    }
+
+    *tool_result_out = agnc_strdup_local(
+        "error: identical tool call repeated too many times; stop retrying and answer the user in plain text.");
+    return *tool_result_out != NULL;
+}
+
+static void agnc_query_loop_guard_note_result(agnc_query_loop_guard_t *guard, const char *result)
+{
+    if (guard == NULL) {
+        return;
+    }
+
+    free(guard->last_result);
+    guard->last_result = result != NULL ? agnc_strdup_local(result) : NULL;
+}
 
 static void agnc_query_accumulate_usage(const agnc_sse_parser_t *parser, const agnc_query_options_t *options)
 {
@@ -104,15 +212,6 @@ static void agnc_query_accumulate_cost(
     if (cost_usd > 0.0) {
         (void)agnc_session_cost_accumulate(options->session_sqlite_path, cost_usd);
     }
-}
-
-static char *agnc_strdup_local(const char *value)
-{
-#ifdef _MSC_VER
-    return _strdup(value);
-#else
-    return strdup(value);
-#endif
 }
 
 static void agnc_query_truncate_tool_result(char **tool_result)
@@ -534,6 +633,30 @@ static void agnc_append_mcp_tools(
     }
 }
 
+static size_t agnc_query_llm_tail_start(const agnc_conversation_t *conversation, size_t default_start)
+{
+    size_t index;
+    size_t last_user = (size_t)-1;
+
+    if (conversation == NULL) {
+        return default_start;
+    }
+
+    for (index = 0; index < conversation->count; index++) {
+        const agnc_conversation_message_t *message = agnc_conversation_at(conversation, index);
+
+        if (message != NULL && message->role != NULL && strcmp(message->role, "user") == 0) {
+            last_user = index;
+        }
+    }
+
+    if (last_user != (size_t)-1 && last_user < default_start) {
+        return last_user;
+    }
+
+    return default_start;
+}
+
 static char *agnc_build_request_json(
     const agnc_config_t *config,
     const agnc_conversation_t *conversation,
@@ -589,6 +712,8 @@ static char *agnc_build_request_json(
                 ? conversation->count - AGNC_CONVERSATION_LLM_WINDOW
                 : 0;
         }
+
+        tail_start = agnc_query_llm_tail_start(conversation, tail_start);
 
         for (index = tail_start; index < conversation->count; index++) {
             const agnc_conversation_message_t *message = agnc_conversation_at(conversation, index);
@@ -1416,11 +1541,14 @@ agnc_status_t agnc_query_run(
     const agnc_mcp_tool_catalog_t *mcp_catalog = NULL;
     int owns_ephemeral_mcp = 0;
     const char *session_sqlite_path = NULL;
+    agnc_query_loop_guard_t loop_guard;
     int tools_for_prompt;
 
     if (config == NULL || conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
+
+    agnc_query_loop_guard_init(&loop_guard);
 
     if (options != NULL) {
         cancel_flag = options->cancel_flag;
@@ -1502,8 +1630,8 @@ agnc_status_t agnc_query_run(
     }
 
     for (iteration = 0; iteration < (size_t)config->max_tool_iterations; iteration++) {
-        const agnc_sse_tool_call_t *tool_call;
-
+        size_t tool_index;
+        size_t tool_count;
         agnc_sse_parser_free(&parser);
         agnc_sse_parser_init(&parser, config->stream, config->verbose);
         if (options != NULL && options->stream_delta_fn != NULL) {
@@ -1580,11 +1708,14 @@ agnc_status_t agnc_query_run(
         }
 
         if (agnc_sse_parser_get_tool_call_count(&parser) > 1 && config->verbose) {
-            fprintf(stderr, "agnc: warning: multiple tool calls received, using the first one\n");
+            fprintf(
+                stderr,
+                "agnc: executing %zu tool calls from one response\n",
+                agnc_sse_parser_get_tool_call_count(&parser));
         }
 
-        tool_call = agnc_sse_parser_get_tool_call(&parser, 0);
-        if (tool_call == NULL || tool_call->name == NULL) {
+        tool_count = agnc_sse_parser_get_tool_call_count(&parser);
+        if (tool_count == 0) {
             status = AGNC_STATUS_PROVIDER_ERROR;
             if (error_message == NULL) {
                 error_message = agnc_strdup_local("tool call missing function name");
@@ -1592,23 +1723,38 @@ agnc_status_t agnc_query_run(
             goto cleanup;
         }
 
-        {
+        for (tool_index = 0; tool_index < tool_count; tool_index++) {
+            const agnc_sse_tool_call_t *tool_call = agnc_sse_parser_get_tool_call(&parser, tool_index);
             char synthetic_id[48];
-            char *arguments = tool_call->arguments != NULL ? agnc_strdup_local(tool_call->arguments) : NULL;
+            char *arguments = NULL;
+            char *arguments_for_hooks = NULL;
             char *tool_result = NULL;
-            const char *tool_id = tool_call->id;
+            const char *tool_id;
+            agnc_status_t tool_status = AGNC_STATUS_OK;
+            int loop_blocked = 0;
 
+            if (tool_call == NULL || tool_call->name == NULL) {
+                status = AGNC_STATUS_PROVIDER_ERROR;
+                if (error_message == NULL) {
+                    error_message = agnc_strdup_local("tool call missing function name");
+                }
+                goto cleanup;
+            }
+
+            tool_id = tool_call->id;
             if (tool_id == NULL) {
-                snprintf(synthetic_id, sizeof(synthetic_id), "call_%zu", iteration);
+                snprintf(synthetic_id, sizeof(synthetic_id), "call_%zu_%zu", iteration, tool_index);
                 tool_id = synthetic_id;
                 if (config->verbose) {
                     fprintf(stderr, "agnc: warning: tool call missing id, using %s\n", synthetic_id);
                 }
             }
 
+            arguments = tool_call->arguments != NULL ? agnc_strdup_local(tool_call->arguments) : NULL;
             if (arguments != NULL) {
                 arguments = agnc_sse_tool_arguments_finalize(arguments);
             }
+            arguments_for_hooks = arguments != NULL ? agnc_strdup_local(arguments) : NULL;
 
             if (config->verbose) {
                 fprintf(stderr, "agnc: tool call %s(%s)\n", tool_call->name, arguments != NULL ? arguments : "{}");
@@ -1618,6 +1764,7 @@ agnc_status_t agnc_query_run(
                 conversation, config, "assistant", NULL, tool_id, tool_call->name, arguments);
             if (status != AGNC_STATUS_OK) {
                 free(arguments);
+                free(arguments_for_hooks);
                 goto cleanup;
             }
 
@@ -1627,34 +1774,41 @@ agnc_status_t agnc_query_run(
 
                 agnc_query_fill_hook_input(&hook_input, config, options);
                 hook_input.tool_name = tool_call->name;
-                hook_input.tool_arguments = arguments;
+                hook_input.tool_arguments = arguments_for_hooks;
                 agnc_query_fire_hook(config, AGNC_HOOK_EVENT_PRE_TOOL, &hook_input, &hook_blocked);
                 if (hook_blocked) {
-                    free(arguments);
                     tool_result = agnc_strdup_local("error: tool blocked by pre_tool hook");
-                    status = AGNC_STATUS_TOOL_DENIED;
+                    tool_status = AGNC_STATUS_TOOL_DENIED;
                     if (tool_result == NULL) {
+                        free(arguments);
+                        free(arguments_for_hooks);
                         status = AGNC_STATUS_OUT_OF_MEMORY;
                         goto cleanup;
                     }
-                    agnc_query_truncate_tool_result(&tool_result);
-                    status = agnc_query_push_message(
-                        conversation,
-                        config,
-                        "tool",
-                        tool_result,
-                        tool_id,
-                        NULL,
-                        NULL);
-                    free(tool_result);
-                    if (status != AGNC_STATUS_OK) {
-                        goto cleanup;
-                    }
-                    continue;
+                    goto push_tool_result;
                 }
             }
 
-            status = agnc_execute_tool(
+            loop_blocked = agnc_query_loop_guard_is_blocked(
+                &loop_guard, tool_call->name, arguments, &tool_result);
+            if (loop_blocked) {
+                if (tool_result == NULL) {
+                    free(arguments);
+                    free(arguments_for_hooks);
+                    status = AGNC_STATUS_OUT_OF_MEMORY;
+                    goto cleanup;
+                }
+                tool_status = AGNC_STATUS_TOOL_FAILED;
+                if (config->verbose) {
+                    fprintf(
+                        stderr,
+                        "agnc: warning: blocked repeated tool call %s\n",
+                        tool_call->name);
+                }
+                goto push_tool_result;
+            }
+
+            tool_status = agnc_execute_tool(
                 config,
                 tool_call->name,
                 arguments,
@@ -1666,27 +1820,33 @@ agnc_status_t agnc_query_run(
                 options != NULL ? options->mcp_session : NULL,
                 options,
                 agent_depth);
-            free(arguments);
 
             if (tool_result == NULL) {
-                if (status == AGNC_STATUS_OK) {
-                    status = AGNC_STATUS_TOOL_FAILED;
+                if (tool_status == AGNC_STATUS_OK) {
+                    tool_status = AGNC_STATUS_TOOL_FAILED;
                 }
                 tool_result = agnc_strdup_local("error: tool execution failed");
                 if (tool_result == NULL) {
+                    free(arguments);
+                    free(arguments_for_hooks);
                     status = AGNC_STATUS_OUT_OF_MEMORY;
                     goto cleanup;
                 }
             }
 
             agnc_query_truncate_tool_result(&tool_result);
+            agnc_query_loop_guard_note_result(&loop_guard, tool_result);
+
+        push_tool_result:
+            agnc_query_truncate_tool_result(&tool_result);
 
             {
                 agnc_hook_payload_input_t hook_input;
+
                 agnc_query_fill_hook_input(&hook_input, config, options);
                 hook_input.tool_name = tool_call->name;
-                hook_input.tool_arguments = arguments;
-                hook_input.tool_status = agnc_status_to_string(status);
+                hook_input.tool_arguments = arguments_for_hooks;
+                hook_input.tool_status = agnc_status_to_string(tool_status);
                 agnc_query_fire_hook(config, AGNC_HOOK_EVENT_POST_TOOL, &hook_input, NULL);
             }
 
@@ -1698,6 +1858,8 @@ agnc_status_t agnc_query_run(
                 tool_id,
                 NULL,
                 NULL);
+            free(arguments);
+            free(arguments_for_hooks);
             free(tool_result);
 
             if (status != AGNC_STATUS_OK) {
@@ -1710,6 +1872,8 @@ agnc_status_t agnc_query_run(
     fprintf(stderr, "agnc: max tool iterations reached\n");
 
 cleanup:
+    agnc_query_loop_guard_clear(&loop_guard);
+
     if (status == AGNC_STATUS_OK && user_prompt != NULL && user_prompt[0] != '\0') {
         agnc_hook_payload_input_t hook_input;
         agnc_query_fill_hook_input(&hook_input, config, options);
