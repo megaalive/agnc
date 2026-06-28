@@ -158,6 +158,22 @@ static void agnc_repl_trim(char *line)
     *end = '\0';
 }
 
+static int agnc_repl_slash_matches(const char *line, const char *cmd)
+{
+    size_t cmd_len;
+
+    if (line == NULL || cmd == NULL) {
+        return 0;
+    }
+
+    cmd_len = strlen(cmd);
+    if (strncmp(line, cmd, cmd_len) != 0) {
+        return 0;
+    }
+
+    return line[cmd_len] == '\0' || line[cmd_len] == ' ' || line[cmd_len] == '\t';
+}
+
 static void agnc_repl_refresh_tui_status(
     const agnc_config_t *config,
     const char *session_name,
@@ -220,7 +236,7 @@ static void agnc_repl_print_help(void)
     agnc_console_repl_printf("  /model [nama]      Model aktif; tanpa arg = ringkasan, dengan arg = ganti model\n");
     agnc_console_repl_printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
     agnc_console_repl_printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
-    agnc_console_repl_printf("  /session           Daftar sesi tersimpan\n");
+    agnc_console_repl_printf("  /session           Daftar sesi tersimpan (/sessions = alias)\n");
     agnc_console_repl_printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
     agnc_console_repl_printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
     agnc_console_repl_printf("  /session delete <nama>  Hapus file sesi dari disk\n");
@@ -786,18 +802,17 @@ static int agnc_repl_handle_slash(
     const char *arg;
     char *space;
 
-    if (strncmp(line, "/help", 5) == 0) {
+    if (agnc_repl_slash_matches(line, "/help")) {
         agnc_repl_print_help();
         return 1;
     }
 
-    if (strncmp(line, "/cls", 4) == 0 &&
-        (line[4] == '\0' || line[4] == ' ' || line[4] == '\t')) {
+    if (agnc_repl_slash_matches(line, "/cls")) {
         agnc_console_clear_screen();
         return 1;
     }
 
-    if (strncmp(line, "/clear", 6) == 0) {
+    if (agnc_repl_slash_matches(line, "/clear")) {
         agnc_conversation_clear(conversation);
         if (*session_path != NULL) {
             (void)agnc_session_clear_messages(*session_path, config);
@@ -821,7 +836,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/compact", 8) == 0) {
+    if (agnc_repl_slash_matches(line, "/compact")) {
         size_t keep = AGNC_COMPACT_KEEP_TAIL;
         agnc_status_t status;
 
@@ -858,7 +873,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/models", 7) == 0) {
+    if (agnc_repl_slash_matches(line, "/models")) {
         char *provider_filter = NULL;
         char *name_filter = NULL;
         agnc_status_t parse_status;
@@ -893,7 +908,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/model", 6) == 0) {
+    if (agnc_repl_slash_matches(line, "/model")) {
         arg = line + 6;
         while (*arg == ' ') {
             arg++;
@@ -944,7 +959,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/provider", 9) == 0) {
+    if (agnc_repl_slash_matches(line, "/provider")) {
         arg = line + 9;
         while (*arg == ' ') {
             arg++;
@@ -978,7 +993,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/mcp", 4) == 0) {
+    if (agnc_repl_slash_matches(line, "/mcp")) {
         arg = line + 4;
         while (*arg == ' ') {
             arg++;
@@ -1008,7 +1023,12 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/session", 8) == 0) {
+    if (agnc_repl_slash_matches(line, "/sessions")) {
+        agnc_repl_print_sessions(*active_session_name);
+        return 1;
+    }
+
+    if (agnc_repl_slash_matches(line, "/session")) {
         arg = line + 8;
         while (*arg == ' ') {
             arg++;
@@ -1103,7 +1123,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/skills", 7) == 0) {
+    if (agnc_repl_slash_matches(line, "/skills")) {
         arg = line + 7;
         while (*arg == ' ') {
             arg++;
@@ -1117,12 +1137,12 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/hooks", 6) == 0) {
+    if (agnc_repl_slash_matches(line, "/hooks")) {
         agnc_repl_print_hooks(config);
         return 1;
     }
 
-    if (strncmp(line, "/cost", 5) == 0) {
+    if (agnc_repl_slash_matches(line, "/cost")) {
         double total_usd = 0.0;
         char *formatted = NULL;
 
@@ -1135,7 +1155,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/view", 5) == 0) {
+    if (agnc_repl_slash_matches(line, "/view")) {
         arg = line + 5;
         while (*arg == ' ') {
             arg++;
@@ -1155,7 +1175,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/jobs", 5) == 0) {
+    if (agnc_repl_slash_matches(line, "/jobs")) {
         arg = line + 5;
         while (*arg == ' ') {
             arg++;
@@ -1185,7 +1205,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/bg", 3) == 0) {
+    if (agnc_repl_slash_matches(line, "/bg")) {
         arg = line + 3;
         while (*arg == ' ') {
             arg++;
@@ -1217,7 +1237,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/usage", 6) == 0) {
+    if (agnc_repl_slash_matches(line, "/usage")) {
         agnc_console_begin_repl_output();
         agnc_console_print_chat_system("usage");
         agnc_repl_print_usage_detail(
@@ -1230,7 +1250,7 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/verbose", 8) == 0) {
+    if (agnc_repl_slash_matches(line, "/verbose")) {
         int new_verbose;
         int parsed;
         char detail[160];
@@ -1279,13 +1299,13 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
-    if (strncmp(line, "/doctor", 7) == 0) {
+    if (agnc_repl_slash_matches(line, "/doctor")) {
         agnc_console_print_chat_system("doctor");
         (void)agnc_cli_run_doctor();
         return 1;
     }
 
-    if (strncmp(line, "/exit", 5) == 0 || strncmp(line, "/quit", 5) == 0) {
+    if (agnc_repl_slash_matches(line, "/exit") || agnc_repl_slash_matches(line, "/quit")) {
         return 2;
     }
 
