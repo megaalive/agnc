@@ -1,48 +1,31 @@
 {
   "schema_version": 1,
   "provider": {
-    "active": "openrouter",
-    "model": "openrouter/owl-alpha",
-    "base_url": "https://openrouter.ai/api/v1",
-    "api_key_env": "AGNC_API_KEY",
-    "api_key_file": null
+    "active": "ollama"
   },
   "providers": {
     "openrouter": {
       "gateway": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
-      "api_key_file": null,
       "api_key_env": "AGNC_API_KEY",
+      "api_key_file": null,
       "default_model": "openrouter/owl-alpha"
     },
-    "custom": {
-      "gateway": "custom-openai-compatible",
-      "base_url": "http://127.0.0.1:8080/v1",
-      "api_key_env": "AGNC_API_KEY",
-      "default_model": "gpt-4o-mini"
+    "ollama": {
+      "gateway": "ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "default_model": "qwen2.5-coder:7b"
     },
     "opencode": {
       "gateway": "opencode-local",
       "base_url": "http://127.0.0.1:4096",
       "default_model": "opencode/big-pickle"
     },
-    "ollama": {
-      "gateway": "ollama",
-      "base_url": "http://127.0.0.1:11434/v1",
-      "default_model": "llama3.2"
-    },
-    "naraya": {
-      "gateway": "naraya",
-      "base_url": "https://api.naraya.ai/v1",
-      "api_key_env": "NARAYA_API_KEY",
-      "default_model": "naraya/default"
-    },
-    "gemini": {
-      "gateway": "gemini",
-      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "api_key_file": null,
-      "api_key_env": "GEMINI_API_KEY",
-      "default_model": "gemini-2.0-flash"
+    "anthropic": {
+      "gateway": "anthropic",
+      "default_model": "claude-sonnet-4-20250514",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "oauth": false
     }
   },
   "permissions": {
@@ -60,23 +43,26 @@
         "args": [
           "-y",
           "@modelcontextprotocol/server-filesystem",
-          "D:/_2025/Gits/megaalive/agnc"
+          "D:/path/to/your/workspace"
         ],
-        "cwd": null,
-        "env": {}
-      },
-      {
-        "id": "second-server",
-        "enabled": false,
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
         "cwd": null,
         "env": {}
       }
     ]
   },
   "tools": {
-    "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob", "find_symbol", "web_fetch", "todo_write"]
+    "enabled": [
+      "shell",
+      "read_file",
+      "write_file",
+      "edit_file",
+      "grep",
+      "glob",
+      "find_symbol",
+      "web_fetch",
+      "todo_write",
+      "sub_agent"
+    ]
   },
   "skills": {
     "enabled": true,

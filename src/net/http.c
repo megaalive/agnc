@@ -461,7 +461,8 @@ agnc_status_t agnc_http_post(
     const char *json_body,
     char **response_body,
     char **error_message,
-    volatile int *cancel_flag)
+    volatile int *cancel_flag,
+    const char *extra_header)
 {
     CURL *curl;
     CURLcode code;
@@ -494,6 +495,9 @@ agnc_status_t agnc_http_post(
     headers = curl_slist_append(headers, "Content-Type: application/json");
     if (auth_header != NULL && auth_header[0] != '\0') {
         headers = curl_slist_append(headers, auth_header);
+    }
+    if (extra_header != NULL && extra_header[0] != '\0') {
+        headers = curl_slist_append(headers, extra_header);
     }
     headers = curl_slist_append(headers, "Accept: application/json");
 

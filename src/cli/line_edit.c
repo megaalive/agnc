@@ -23,6 +23,22 @@
 static char g_repl_history[AGNC_REPL_HISTORY_MAX][AGNC_REPL_HISTORY_WIDTH];
 static size_t g_repl_history_count = 0;
 static size_t g_repl_history_browse = 0;
+static agnc_repl_line_idle_needed_fn g_repl_line_idle_needed = NULL;
+static agnc_repl_line_idle_poll_fn g_repl_line_idle_poll = NULL;
+static agnc_repl_line_idle_needed_fn g_repl_line_idle_perm_needed = NULL;
+static agnc_repl_line_idle_fn g_repl_line_idle_perm_handle = NULL;
+
+void agnc_repl_line_set_idle(
+    agnc_repl_line_idle_needed_fn needed,
+    agnc_repl_line_idle_poll_fn poll,
+    agnc_repl_line_idle_needed_fn perm_needed,
+    agnc_repl_line_idle_fn perm_handle)
+{
+    g_repl_line_idle_needed = needed;
+    g_repl_line_idle_poll = poll;
+    g_repl_line_idle_perm_needed = perm_needed;
+    g_repl_line_idle_perm_handle = perm_handle;
+}
 
 static void agnc_repl_history_push(const char *line)
 {
@@ -135,6 +151,31 @@ static void agnc_repl_redraw(agnc_repl_edit_view_t *view, const char *draft, siz
     SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor));
 }
 
+static void agnc_repl_echo_char(agnc_repl_edit_view_t *view, char ch, size_t cursor_after)
+{
+    COORD pos;
+    DWORD written;
+
+    if (cursor_after == 0) {
+        return;
+    }
+
+    pos = agnc_repl_cursor_pos(view, cursor_after - 1);
+    SetConsoleCursorPosition(view->out, pos);
+    WriteConsoleA(view->out, &ch, 1, &written, NULL);
+    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after));
+}
+
+static void agnc_repl_echo_backspace_at_end(agnc_repl_edit_view_t *view, size_t cursor_after)
+{
+    DWORD written;
+    const char seq[3] = { '\b', ' ', '\b' };
+
+    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after + 1));
+    WriteConsoleA(view->out, seq, 3, &written, NULL);
+    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after));
+}
+
 static void agnc_repl_edit_init_view(agnc_repl_edit_view_t *view, HANDLE out)
 {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -198,6 +239,49 @@ static void agnc_repl_insert_text(
     agnc_repl_redraw(view, draft, *length, *cursor);
 }
 
+static int agnc_repl_key_ctrl_pressed(const INPUT_RECORD *record)
+{
+    return (record->Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+}
+
+static int agnc_repl_is_word_char(char ch)
+{
+    return ch != '\0' && ch != ' ' && ch != '\t';
+}
+
+static size_t agnc_repl_word_left(const char *draft, size_t cursor)
+{
+    size_t pos = cursor;
+
+    while (pos > 0 && !agnc_repl_is_word_char(draft[pos - 1])) {
+        pos--;
+    }
+    while (pos > 0 && agnc_repl_is_word_char(draft[pos - 1])) {
+        pos--;
+    }
+    return pos;
+}
+
+static size_t agnc_repl_word_right(const char *draft, size_t length, size_t cursor)
+{
+    size_t pos = cursor;
+
+    while (pos < length && !agnc_repl_is_word_char(draft[pos])) {
+        pos++;
+    }
+    while (pos < length && agnc_repl_is_word_char(draft[pos])) {
+        pos++;
+    }
+    return pos;
+}
+
+static void agnc_repl_refresh_prompt_line(HANDLE stdout_handle, agnc_repl_edit_view_t *view)
+{
+    printf(">\n");
+    fflush(stdout);
+    agnc_repl_edit_init_view(view, stdout_handle);
+}
+
 int agnc_repl_read_line(char *buffer, size_t capacity)
 {
     HANDLE stdin_handle;
@@ -233,6 +317,34 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         DWORD read_count;
         WORD key;
 
+        if (g_repl_line_idle_needed != NULL && g_repl_line_idle_needed()) {
+            DWORD wait = WaitForSingleObject(stdin_handle, 50);
+
+            if (wait == WAIT_TIMEOUT) {
+                int layout_changed = 0;
+
+                if (g_repl_line_idle_perm_needed != NULL && g_repl_line_idle_perm_needed()) {
+                    agnc_console_input_end(&input_session);
+                    if (g_repl_line_idle_perm_handle != NULL) {
+                        g_repl_line_idle_perm_handle();
+                    }
+                    agnc_console_input_begin(&input_session);
+                    layout_changed = 1;
+                } else if (g_repl_line_idle_poll != NULL) {
+                    layout_changed = g_repl_line_idle_poll();
+                }
+                if (layout_changed) {
+                    agnc_repl_refresh_prompt_line(stdout_handle, &view);
+                    agnc_repl_redraw(&view, draft, length, cursor);
+                }
+                continue;
+            }
+
+            if (wait != WAIT_OBJECT_0) {
+                continue;
+            }
+        }
+
         if (!ReadConsoleInputA(stdin_handle, &record, 1, &read_count) || read_count == 0) {
             agnc_console_input_end(&input_session);
             return length > 0;
@@ -267,12 +379,42 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             break;
         }
 
+        if (key == VK_ESCAPE) {
+            draft[0] = '\0';
+            length = 0;
+            cursor = 0;
+            browsing = 0;
+            agnc_repl_redraw(&view, draft, length, cursor);
+            continue;
+        }
+
         if (key == VK_BACK) {
-            if (cursor > 0) {
-                memmove(draft + cursor - 1, draft + cursor, length - cursor + 1);
-                cursor--;
-                length--;
-                agnc_repl_redraw(&view, draft, length, cursor);
+            if (agnc_repl_key_ctrl_pressed(&record)) {
+                if (cursor > 0) {
+                    size_t new_cursor = agnc_repl_word_left(draft, cursor);
+
+                    memmove(draft + new_cursor, draft + cursor, length - cursor + 1);
+                    length -= cursor - new_cursor;
+                    cursor = new_cursor;
+                    agnc_repl_redraw(&view, draft, length, cursor);
+                }
+            } else if (cursor > 0) {
+                if (cursor == length && length > 1) {
+                    length--;
+                    cursor--;
+                    draft[length] = '\0';
+                    agnc_repl_echo_backspace_at_end(&view, cursor);
+                } else if (cursor == length && length == 1) {
+                    length = 0;
+                    cursor = 0;
+                    draft[0] = '\0';
+                    agnc_repl_redraw(&view, draft, length, cursor);
+                } else {
+                    memmove(draft + cursor - 1, draft + cursor, length - cursor + 1);
+                    cursor--;
+                    length--;
+                    agnc_repl_redraw(&view, draft, length, cursor);
+                }
             }
             browsing = 0;
             continue;
@@ -289,18 +431,22 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         }
 
         if (key == VK_LEFT) {
-            if (cursor > 0) {
+            if (agnc_repl_key_ctrl_pressed(&record)) {
+                cursor = agnc_repl_word_left(draft, cursor);
+            } else if (cursor > 0) {
                 cursor--;
-                SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
             }
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
             continue;
         }
 
         if (key == VK_RIGHT) {
-            if (cursor < length) {
+            if (agnc_repl_key_ctrl_pressed(&record)) {
+                cursor = agnc_repl_word_right(draft, length, cursor);
+            } else if (cursor < length) {
                 cursor++;
-                SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
             }
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
             continue;
         }
 
@@ -358,6 +504,10 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
                 record.Event.KeyEvent.uChar.AsciiChar) &&
             length + 1 < capacity && length + 1 < sizeof(draft)) {
             char ch = record.Event.KeyEvent.uChar.AsciiChar;
+            SHORT rows_before;
+            int append_at_end = cursor == length;
+
+            rows_before = agnc_repl_rows_for_length(view.start.X, length, view.screen_width);
 
             if (cursor < length) {
                 memmove(draft + cursor + 1, draft + cursor, length - cursor + 1);
@@ -366,7 +516,14 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             cursor++;
             length++;
             draft[length] = '\0';
-            agnc_repl_redraw(&view, draft, length, cursor);
+
+            if (append_at_end &&
+                rows_before == agnc_repl_rows_for_length(view.start.X, length, view.screen_width)) {
+                agnc_repl_echo_char(&view, ch, cursor);
+                view.rows_used = rows_before;
+            } else {
+                agnc_repl_redraw(&view, draft, length, cursor);
+            }
             browsing = 0;
         }
     }

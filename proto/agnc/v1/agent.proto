@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package agnc.v1;
+
+// Layanan agent headless — ekspos agnc_query_run ke klien remote.
+service Agent {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc RunQuery(RunQueryRequest) returns (RunQueryResponse);
+  rpc StreamQuery(StreamQueryRequest) returns (stream StreamQueryResponse);
+  rpc CancelQuery(CancelQueryRequest) returns (CancelQueryResponse);
+  // Jawab prompt permission yang memblokir RunQuery/StreamQuery (query_id harus sama).
+  rpc RespondPermission(PermissionResponse) returns (PermissionAck);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string version = 1;
+}
+
+message RunQueryRequest {
+  string prompt = 1;
+  string session_name = 2;
+  bool auto_approve = 3;
+  bool enable_tools = 4;
+  string query_id = 5;
+}
+
+message RunQueryResponse {
+  string status = 1;
+  string assistant_text = 2;
+  int64 usage_prompt_tokens = 3;
+  int64 usage_completion_tokens = 4;
+  int64 usage_total_tokens = 5;
+  string error_message = 6;
+}
+
+message StreamQueryRequest {
+  string prompt = 1;
+  string session_name = 2;
+  bool auto_approve = 3;
+  bool enable_tools = 4;
+  string query_id = 5;
+}
+
+message PermissionRequest {
+  string query_id = 1;
+  string kind = 2;
+  string detail = 3;
+}
+
+message PermissionResponse {
+  string query_id = 1;
+  bool allowed = 2;
+}
+
+message PermissionAck {
+  bool accepted = 1;
+}
+
+message StreamQueryResponse {
+  string text_delta = 1;
+  bool done = 2;
+  string status = 3;
+  int64 usage_total_tokens = 4;
+  string error_message = 5;
+  PermissionRequest permission_request = 6;
+  int64 usage_prompt_tokens = 7;
+  int64 usage_completion_tokens = 8;
+}
+
+message CancelQueryRequest {
+  string query_id = 1;
+}
+
+message CancelQueryResponse {
+  bool cancelled = 1;
+}
+

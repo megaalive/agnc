@@ -1997,3 +1997,56 @@ agnc_status_t agnc_session_meta_delete(const char *path, const char *key)
     sqlite3_close(db);
     return status;
 }
+
+static double agnc_session_parse_meta_double(const char *text, double default_value)
+{
+    char *end = NULL;
+    double value;
+
+    if (text == NULL || text[0] == '\0') {
+        return default_value;
+    }
+
+    value = strtod(text, &end);
+    if (end == text) {
+        return default_value;
+    }
+
+    return value;
+}
+
+agnc_status_t agnc_session_cost_load(const char *path, double *total_usd_out)
+{
+    char *text = NULL;
+
+    if (total_usd_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *total_usd_out = 0.0;
+    if (agnc_session_meta_get(path, "usage_cost_total_usd", &text) == AGNC_STATUS_OK && text != NULL) {
+        *total_usd_out = agnc_session_parse_meta_double(text, 0.0);
+    }
+    free(text);
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_cost_accumulate(const char *path, double delta_usd)
+{
+    double total = 0.0;
+    char buffer[64];
+
+    if (path == NULL || delta_usd <= 0.0) {
+        return AGNC_STATUS_OK;
+    }
+
+    (void)agnc_session_cost_load(path, &total);
+    total += delta_usd;
+    snprintf(buffer, sizeof(buffer), "%.8f", total);
+    return agnc_session_meta_set(path, "usage_cost_total_usd", buffer);
+}
+
+agnc_status_t agnc_session_cost_reset(const char *path)
+{
+    return agnc_session_meta_set(path, "usage_cost_total_usd", "0");
+}

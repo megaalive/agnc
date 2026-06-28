@@ -12,4 +12,18 @@
 /* Baca satu baris dari stdin; mengembalikan 0 jika EOF, 1 jika OK. */
 int agnc_repl_read_line(char *buffer, size_t capacity);
 
+typedef void (*agnc_repl_line_idle_fn)(void);
+typedef int (*agnc_repl_line_idle_poll_fn)(void);
+typedef int (*agnc_repl_line_idle_needed_fn)(void);
+
+/*
+ * Hook polling job background saat menunggu input (tanpa mengganggu sesi raw mode).
+ * poll: return 1 jika output konsol berubah (perlu reset prompt `>`).
+ */
+void agnc_repl_line_set_idle(
+    agnc_repl_line_idle_needed_fn needed,
+    agnc_repl_line_idle_poll_fn poll,
+    agnc_repl_line_idle_needed_fn perm_needed,
+    agnc_repl_line_idle_fn perm_handle);
+
 #endif /* AGNC_LINE_EDIT_H */

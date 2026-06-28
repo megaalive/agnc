@@ -45,20 +45,139 @@ cmake --build --preset x64-Debug
 
 ### Setup config
 
-Salin config dan pastikan API key tersedia (env atau `.keys/openrouter.txt`):
+Salin template ke home directory, lalu sesuaikan provider aktif dan path MCP:
 
 ```powershell
 copy config\agnc.example.json $env:USERPROFILE\.agnc.json
-# set env: $env:AGNC_API_KEY = "sk-..."
 ```
 
-Provider aktif diatur lewat `provider.active` dan entri `providers` di `~/.agnc.json` (lihat `config/agnc.example.json`). Gateway dideskripsikan di `descriptors/gateways/*.json` dan dikompilasi ke registry C lewat:
+**Catatan:** `config/agnc.example.json` hanya template minimal. Bentuk config yang dipakai sehari-hari lebih sederhana: `provider.active` menunjuk ke entri di `providers{}`; model, URL, dan kredensial diatur per provider — **bukan** di blok `provider` root (field lama `provider.model` / `provider.base_url` di root sudah tidak dipakai).
+
+Provider aktif: `"provider": { "active": "ollama" }` lalu isi `providers.ollama`, `providers.openrouter`, dll. Gateway dideskripsikan di `descriptors/gateways/*.json` dan dikompilasi ke registry C lewat:
 
 ```powershell
 python scripts/generate_integrations.py   # juga dijalankan otomatis oleh build.ps1
 ```
 
 Override env: `AGNC_PROVIDER`, `AGNC_BASE_URL`, `AGNC_MODEL`.
+
+### Contoh `~/.agnc.json`
+
+Contoh nyata (disanitasi dari pemakaian harian; salin ke `%USERPROFILE%\.agnc.json` dan edit path):
+
+```json
+{
+  "schema_version": 1,
+  "provider": {
+    "active": "ollama"
+  },
+  "providers": {
+    "openrouter": {
+      "gateway": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "AGNC_API_KEY",
+      "api_key_file": "C:\\Users\\YOU\\.agnc\\keys\\openrouter.txt",
+      "default_model": "openrouter/owl-alpha"
+    },
+    "ollama": {
+      "gateway": "ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "default_model": "qwen2.5-coder:7b"
+    },
+    "opencode": {
+      "gateway": "opencode-local",
+      "base_url": "http://127.0.0.1:4096",
+      "default_model": "opencode/big-pickle"
+    },
+    "anthropic": {
+      "gateway": "anthropic",
+      "default_model": "claude-sonnet-4-20250514",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "oauth": false
+    }
+  },
+  "permissions": {
+    "mode": "default",
+    "always_allow": ["mcp"],
+    "always_deny": [],
+    "always_ask": ["shell", "write_file", "edit_file", "mcp", "web_fetch"]
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "workspace-fs",
+        "enabled": true,
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:/path/to/your/repo"],
+        "cwd": null,
+        "env": {}
+      }
+    ]
+  },
+  "tools": {
+    "enabled": ["shell", "read_file", "write_file", "edit_file", "grep", "glob", "web_fetch", "todo_write"]
+  },
+  "runtime": {
+    "max_tool_iterations": 25,
+    "stream": true,
+    "verbose": false
+  },
+  "paths": {
+    "sessions_dir": "~/.agnc/sessions",
+    "cache_dir": "~/.agnc/cache"
+  }
+}
+```
+
+| Field | Keterangan |
+| --- | --- |
+| `provider.active` | Id provider di `providers{}` (REPL: `/provider <id>`) |
+| `providers.<id>.gateway` | Id gateway dari `descriptors/gateways/` |
+| `api_key_env` | Nama env var (mis. `AGNC_API_KEY`, `ANTHROPIC_API_KEY`) |
+| `api_key_file` | Path absolut ke file teks satu baris (API key); `~` **tidak** diekspansi — gunakan path penuh |
+| `oauth` | `true`: muat token dari `~/.agnc/oauth/<id>.json` + auto-refresh jika ada `refresh_token` |
+| `default_model` | Model default provider ini |
+| `mcp.servers[].args` | Argumen terakhir = root filesystem MCP (biasanya repo Anda) |
+
+Kredensial API key untuk dev lokal: folder `.keys/` (gitignored) atau `%USERPROFILE%\.agnc\keys\`.
+
+### OAuth (Anthropic / Claude)
+
+Alternatif selain `ANTHROPIC_API_KEY`: token OAuth disimpan di `~/.agnc/oauth/<provider_id>.json`:
+
+```json
+{
+  "access_token": "...",
+  "refresh_token": "...",
+  "expires_at": 1710000000
+}
+```
+
+Aktifkan di config:
+
+```json
+"anthropic": {
+  "gateway": "anthropic",
+  "default_model": "claude-sonnet-4-20250514",
+  "oauth": true
+}
+```
+
+Saat `oauth: true`, agnc memuat access token dari disk dan **me-refresh otomatis** jika `expires_at` ≤ 120 detik (butuh `refresh_token`). Fallback: `api_key_env` / env gateway jika load OAuth gagal.
+
+**CLI OAuth:**
+
+```powershell
+agnc oauth set anthropic --token ACCESS_TOKEN    # atau pipe stdin
+agnc oauth status anthropic
+agnc oauth refresh anthropic                    # refresh jika perlu
+agnc oauth refresh anthropic --force            # paksa refresh
+agnc oauth clear anthropic
+```
+
+Secret tidak pernah dicetak ke stdout. `agnc doctor` menampilkan baris `oauth:anthropic` (ok / warn / error / skipped).
+
+Uji live membutuhkan akun Claude dengan token OAuth valid (mis. dari alur Claude Code). Tanpa akun, logic refresh tetap ter-cover unit test `test_oauth`.
 
 ### Mode interaktif (default)
 
@@ -110,7 +229,8 @@ Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provid
 | `--print "prompt"` | Query headless ke provider |
 | `--no-tools` | Chat tanpa tool schema |
 | `--yes` / `-y` | Setujui otomatis: shell, tulis/edit file, MCP, `web_fetch` |
-| `doctor` | Cek config, libcurl, yyjson, ripgrep, ctags, koneksi MCP |
+| `doctor` | Cek config, libcurl, yyjson, ripgrep, ctags, koneksi MCP, OAuth |
+| `oauth` | Subcommand: `set`, `status`, `refresh`, `clear` — token di `~/.agnc/oauth/` |
 | `models [provider] [filter]` | Discovery model semua provider config (`--json`, `--filter`) |
 | `--version` | Tampilkan versi |
 
@@ -150,7 +270,7 @@ ctest --test-dir out\build\x64-Debug -C Debug --output-on-failure
 
 ## Config
 
-File global: `%USERPROFILE%\.agnc.json` (contoh di `config/agnc.example.json`).
+File global: `%USERPROFILE%\.agnc.json`. Template repo: `config/agnc.example.json` (bentuk minimal). **Referensi lengkap:** bagian [Contoh `~/.agnc.json`](#contoh-agncjson) dan [OAuth](#oauth-anthropic--claude) di atas.
 
 Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corrupt.
 
@@ -158,6 +278,90 @@ Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corru
 
 - Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
 - API key tidak pernah dicetak ke log atau stdout.
+
+### gRPC server (`agnc serve`)
+
+Build gRPC aktif default (`AGNC_BUILD_GRPC=ON`). **`build.ps1 release` memakai `VCPKG_BUILD_TYPE=release`** — vcpkg **tidak** membangun grpc debug (`x64-windows-dbg`). Build pertama grpc release tetap lama (~15–30 menit) tapi setengah dari dbg+rel.
+
+Jika configure lama tanpa flag ini sudah mulai grpc debug, hentikan lalu bersihkan cache vcpkg:
+
+```powershell
+Remove-Item -Recurse -Force out\build\x64-Release\vcpkg_installed -ErrorAction SilentlyContinue
+.\scripts\build.ps1 release
+```
+
+Nonaktifkan gRPC untuk build cepat tanpa `agnc serve`:
+
+```powershell
+cmake --preset x64-Release -DAGNC_BUILD_GRPC=OFF
+cmake --build --preset x64-Release
+```
+
+Build normal (Release = grpc **release** saja):
+
+```powershell
+.\scripts\build.ps1 release
+.\out\build\x64-Release\agnc.exe serve --listen 127.0.0.1:50051
+```
+
+Tanpa gRPC (`AGNC_BUILD_GRPC=OFF`), `agnc serve` menampilkan pesan rebuild.
+
+RPC (`proto/agnc/v1/agent.proto`):
+
+| RPC | Keterangan |
+| --- | --- |
+| `Health` | Versi agnc |
+| `RunQuery` | Satu turn; respons utuh + usage + `error_message` detail |
+| `StreamQuery` | Delta teks **live** dari SSE provider; chunk `done` di akhir |
+| `CancelQuery` | Batalkan via `query_id` |
+| `RespondPermission` | Jawab prompt permission (`query_id` harus sama dengan query aktif) |
+
+Field request: `prompt`, `session_name` (opsional), `auto_approve`, `enable_tools`, `query_id` (cancel + permission).
+
+Server mengaktifkan **gRPC reflection** — `grpcurl` tanpa `-proto` cukup `-plaintext`.
+
+Contoh dengan [grpcurl](https://github.com/fullstorydev/grpcurl) (`go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest`):
+
+```powershell
+$grpcurl = "$env:USERPROFILE\go\bin\grpcurl.exe"
+$addr = "127.0.0.1:50051"
+
+# Health (reflection — tanpa file .proto)
+& $grpcurl -plaintext $addr list
+& $grpcurl -plaintext -d "{}" $addr agnc.v1.Agent/Health
+
+# RunQuery — PowerShell: hindari BOM dengan cmd pipe
+cmd /c "echo {""prompt"":""Say hello."",""auto_approve"":true,""enable_tools"":false}| ""$grpcurl"" -plaintext -d @ $addr agnc.v1.Agent/RunQuery"
+
+# StreamQuery (delta live)
+cmd /c "echo {""prompt"":""Say hello."",""auto_approve"":true,""enable_tools"":false}| ""$grpcurl"" -plaintext -d @ $addr agnc.v1.Agent/StreamQuery"
+```
+
+Permission interaktif (`auto_approve=false`, tools aktif): server mengirim `permission_request` di stream (atau log ke stderr untuk `RunQuery`); klien panggil `RespondPermission` di thread lain:
+
+```powershell
+& $grpcurl -plaintext -d '{"query_id":"job-1","allowed":true}' $addr agnc.v1.Agent/RespondPermission
+```
+
+Helper PowerShell (hindari UTF-8 BOM):
+
+```powershell
+function Invoke-AgncGrpc {
+    param([string]$Method, [string]$Json)
+    $grpcurl = "$env:USERPROFILE\go\bin\grpcurl.exe"
+    $addr = "127.0.0.1:50051"
+    $tmp = Join-Path $env:TEMP ("agnc-grpc-" + [guid]::NewGuid().ToString("n") + ".json")
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($tmp, $Json, $utf8)
+        cmd /c "type `"$tmp`" | `"$grpcurl`" -plaintext -d @ $addr $Method"
+    } finally {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+```
+
+Pastikan `provider.active` di `~/.agnc.json` mengarah ke provider yang jalan (mis. `openrouter`, bukan `ollama` jika Ollama mati).
 
 Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk checklist uji manual.
 
@@ -185,4 +389,10 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.14** — hooks shell per event agent: selesai
 - **Fase 6.15** — gateway Ollama lokal + doctor + `/model` list: selesai
 - **Fase 6.16** — OpenCode native, `agnc models`, cancel Ctrl+C HTTP: selesai
-- **Fase 6.17+** — sub-agent, OAuth, gRPC, TUI: backlog (lihat `roadmap.md`)
+- **Fase 6.17** — background sessions (`/bg`, `/jobs`): selesai
+- **Fase 6.18** — Anthropic native + OAuth token store: selesai
+- **Fase 6.19** — sub-agent tool: selesai
+- **Fase 6.20** — cost tracking (`/cost`): selesai
+- **Fase 6.21** — OAuth refresh flow (`agnc oauth refresh`, auto-refresh saat load config): selesai
+- **Fase 6.22** — gRPC server (`agnc serve`): selesai
+- **Fase 6.23+** — TUI, job bg paralel: backlog (lihat `roadmap.md` §12.6)

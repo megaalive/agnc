@@ -12,9 +12,14 @@
 #include "agnc/mcp/session.h"
 #include "agnc/status.h"
 
+typedef void (*agnc_query_stream_delta_fn)(const char *text, size_t length, void *user_data);
+
 typedef struct {
     volatile int *cancel_flag; /* Ctrl+C: set ke 1 untuk batalkan request HTTP aktif. */
-    int stream_live_print;     /* Reserved: cetak delta SSE langsung (tidak dipakai REPL). */
+    int stream_live_print;     /* Cetak delta SSE ke stdout (REPL tidak memakai). */
+    agnc_query_stream_delta_fn stream_delta_fn; /* Headless/gRPC: delta ke callback. */
+    void *stream_delta_ctx;
+    char **error_message_out;  /* Diisi detail error HTTP/provider jika gagal. */
     int chat_assistant_timestamp; /* REPL: cetak timestamp asisten saat jawaban siap (bukan saat mulai). */
     int auto_approve;          /* Setujui shell/write/mcp/web_fetch tanpa prompt (headless --yes). */
     agnc_mcp_session_t *mcp_session; /* REPL: koneksi MCP persist; NULL = load per run. */
@@ -23,6 +28,8 @@ typedef struct {
     long *usage_total_tokens;
     const char *session_name;      /* Opsional: nama sesi untuk hook payload. */
     const char *session_sqlite_path; /* Opsional: path ~/.agnc/sessions/<nama>.sqlite (OpenCode meta). */
+    int agent_depth;               /* Kedalaman sub_agent (0 = turn utama). */
+    int suppress_chat_output;      /* Job background: jangan cetak ke stdout (hindari timpa prompt). */
 } agnc_query_options_t;
 
 /*

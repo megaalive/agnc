@@ -36,6 +36,8 @@ AGNC_API void agnc_cli_options_free_impl(agnc_cli_options_t *options)
     options->models_provider_filter = NULL;
     free(options->models_name_filter);
     options->models_name_filter = NULL;
+    free(options->serve_listen);
+    options->serve_listen = NULL;
 }
 
 /* Parse argv ke agnc_cli_options_t; default ke --help jika tidak ada subcommand. */
@@ -103,6 +105,33 @@ AGNC_API agnc_status_t agnc_cli_parse_impl(int argc, char **argv, agnc_cli_optio
             continue;
         }
 
+        if (strcmp(argv[index], "serve") == 0) {
+            options->show_serve = 1;
+            for (index = index + 1; index < argc; index++) {
+                if (strcmp(argv[index], "--listen") == 0) {
+                    if (index + 1 >= argc) {
+                        fprintf(stderr, "agnc: --listen requires HOST:PORT\n");
+                        return AGNC_STATUS_INVALID_ARGUMENT;
+                    }
+                    free(options->serve_listen);
+                    options->serve_listen = agnc_strdup_local(argv[index + 1]);
+                    if (options->serve_listen == NULL) {
+                        return AGNC_STATUS_OUT_OF_MEMORY;
+                    }
+                    index++;
+                    continue;
+                }
+                if (argv[index][0] == '-') {
+                    fprintf(stderr, "agnc: unknown argument: %s\n", argv[index]);
+                    return AGNC_STATUS_INVALID_ARGUMENT;
+                }
+                fprintf(stderr, "agnc: unknown serve argument: %s\n", argv[index]);
+                return AGNC_STATUS_INVALID_ARGUMENT;
+            }
+            index--;
+            continue;
+        }
+
         if (strcmp(argv[index], "--help") == 0 || strcmp(argv[index], "-h") == 0) {
             options->show_help = 1;
             continue;
@@ -152,7 +181,7 @@ AGNC_API agnc_status_t agnc_cli_parse_impl(int argc, char **argv, agnc_cli_optio
     }
 
     if (!options->show_version && !options->show_doctor && !options->show_help && !options->show_print &&
-        !options->show_models) {
+        !options->show_models && !options->show_serve) {
         options->show_interactive = 1;
     }
 
@@ -179,6 +208,7 @@ AGNC_API int agnc_cli_run_help_impl(void)
     printf("  agnc --print \"your prompt\"     Run headless agent query (Phase 1)\n");
     printf("  agnc --print --no-tools \"...\"  Chat tanpa tool schema (model tanpa tool use)\n");
     printf("  agnc --print --yes \"...\"       Setujui shell otomatis (non-interaktif)\n");
+    printf("  agnc serve [--listen HOST:PORT]  gRPC server (nonaktif: cmake -DAGNC_BUILD_GRPC=OFF)\n");
     printf("  agnc --help                    Show this help\n");
     return 0;
 }

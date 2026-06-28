@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.17+) | Sub-agent, OAuth, gRPC, TUI | backlog |
+| **6. Fitur besar** (Fase 6.17+) | Sub-agent, OAuth, gRPC, TUI | **6.17–6.22 selesai**; **6.23–6.24** backlog (§12.6) |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -1340,18 +1340,131 @@ Tasks:
 - CLI `agnc models` + REPL `/models` (filter); `/model` ringkasan. — `models.c`, `repl.c`
 - Cancel Ctrl+C pada HTTP libcurl. — `http.c`, `repl.c`
 
-#### Fase 6.17+ — Backlog fitur besar
+#### Fase 6.17 — Background sessions — **selesai**
 
-Candidates (masing-masing butuh milestone + acceptance sebelum implementasi):
+Tasks:
 
-- Background sessions
-- Sub-agent
-- OAuth
-- Anthropic native
-- gRPC server
-- TUI lebih kaya
-- Token usage dan cost tracking
-- ~~`todo_write` tool (§11.7)~~ — **selesai** (`src/tools/todo_write.c`)
+- Worker thread tunggal + sesi `bg-<id>`. — `repl_jobs.c`, `repl.c`
+- REPL: `/bg`, `&prompt`, `/jobs`, Ctrl+C cancel background.
+- Antrean FIFO (maks 16) + `/jobs clear` — **selesai** (2026-06).
+
+**Backlog lanjutan (6.17.x, belum):**
+
+- **Job paralel terbatas** — pool N worker (mis. 2–3 concurrent); permission prompt per job-id; `/jobs cancel <id>`; poll multi-job. Alasan ditunda: UI izin tool, race workspace, rate limit API.
+
+#### Fase 6.18 — Anthropic native + OAuth — **selesai**
+
+Tasks:
+
+- Gateway `anthropic-native` + `anthropic.c` (Messages API). — `descriptors/gateways/anthropic.json`
+- OAuth token store `~/.agnc/oauth/` + `agnc oauth set|status|clear`. — `oauth.c`, `config.c`
+
+#### Fase 6.19 — Sub-agent tool — **selesai**
+
+Tasks:
+
+- Tool `sub_agent` (isolasi `agnc_query_run`, depth max 1). — `sub_agent.c`, `query.c`
+
+#### Fase 6.20 — Cost tracking — **selesai**
+
+Tasks:
+
+- Estimasi USD heuristik per turn + meta SQLite. — `cost.c`, `session.c`
+- REPL `/cost`; akumulasi otomatis setelah turn sukses.
+
+#### Fase 6.21 — OAuth refresh flow — **selesai**
+
+Tujuan: token OAuth di `~/.agnc/oauth/` tidak kedaluwarsa tanpa intervensi manual; melengkapi Fase 6.18.
+
+Tasks:
+
+- `agnc_oauth_refresh_if_needed(provider_id)` — cek `expires_at`, refresh via HTTP jika perlu. — `oauth.c`
+- Endpoint refresh Anthropic (`platform.claude.com`, fallback `console.anthropic.com`). — `oauth.c`, `http.c`
+- Hook saat load config OAuth (`agnc_oauth_load_fresh_access_token`). — `config.c`
+- CLI `agnc oauth refresh <provider> [--force]`; doctor `oauth:anthropic`. — `oauth.c`, `doctor.c`
+- Test offline parse + kebijakan expiry — `tests/test_oauth.c`
+
+Acceptance:
+
+- Token dengan `expires_at` lewat otomatis di-refresh sebelum request LLM (jika `refresh_token` ada).
+- `agnc oauth refresh anthropic` sukses/gagal dengan pesan jelas; secret tidak tercetak.
+- Request setelah refresh memakai access token baru tanpa restart REPL.
+- Uji live membutuhkan akun Claude OAuth; unit test offline tanpa jaringan.
+
+### 12.6 Urutan kerja Fase 6.22–6.24 (dikunci 2026-06)
+
+Prioritas setelah 6.21: **gRPC dulu** (headless + integrasi eksternal), lalu **TUI bertahap** (UX terminal), paralel **bg job** bisa diselipkan kapan saja.
+
+Prinsip:
+
+- gRPC **tidak** menggantikan REPL; mengekspos `agnc_query_run` ke klien lain (IDE plugin, skrip, orchestrator).
+- TUI **bukan** port React/Ink OpenClaude — perluasan modul `console.c` / layout ANSI yang sudah ada.
+- Keduanya bergantung pada core stabil (6.17–6.21); jangan blokir perbaikan kecil REPL.
+
+#### Fase 6.22 — gRPC server — **selesai (2026-06)**
+
+Tujuan: proses `agnc serve` menerima prompt dari klien remote tanpa stdin interaktif.
+
+| Langkah | Isi | Status |
+| --- | --- | --- |
+| **6.22.1** | Kontrak protobuf v1 | **Selesai** — `proto/agnc/v1/agent.proto` |
+| **6.22.2** | Build grpc + protobuf via vcpkg | **Selesai** — `AGNC_BUILD_GRPC`, feature `grpc` |
+| **6.22.3** | Server bootstrap + reflection | **Selesai** — `agnc serve`, grpcurl tanpa `-proto` |
+| **6.22.4** | Unary `RunQuery` + error detail | **Selesai** — `grpc_bridge.c`, `error_message` HTTP |
+| **6.22.5** | Server-streaming live | **Selesai** — delta SSE via `StreamQuery` |
+| **6.22.6** | Permission headless | **Selesai** — `RespondPermission` + stream event |
+| **6.22.7** | Test + docs | **Selesai** — `test_grpc_bridge`, `test_grpc_health`, README |
+
+Build:
+
+```powershell
+cmake --preset x64-Release
+cmake --build --preset x64-Release
+.\out\build\x64-Release\agnc.exe serve --listen 127.0.0.1:50051
+```
+
+Nonaktifkan gRPC: `-DAGNC_BUILD_GRPC=OFF`.
+
+#### Fase 6.23 — TUI REPL bertahap — **backlog**
+
+Tujuan: pengalaman terminal lebih kaya tanpa framework UI penuh; memanfaatkan `console.c`, `line_edit.c`, VT Windows.
+
+| Langkah | Isi | Deliverable |
+| --- | --- | --- |
+| **6.23.1** | Status bar | Satu baris di bawah prompt: model, sesi, token turn terakhir, jumlah bg job |
+| **6.23.2** | Layout scroll | Area chat scrollable + input fixed (refactor redraw `console.c`) |
+| **6.23.3** | Panel tool aktivitas | Collapse/expand log tool di sisi kanan atau baris bawah (toggle `/view tools`) |
+| **6.23.4** | Panel background jobs | Visual antre + running dari `/jobs`; notifikasi selesai non-intrusif |
+| **6.23.5** | Evaluasi library | Spike 1–2 hari: notcurses vs ANSI murni; pilih yang paling kecil |
+
+Acceptance:
+
+- REPL 80×24 usable: input tidak tergeser saat output panjang; status bar akurat setelah `/model`, `/session`, `/bg`.
+- `/view` (atau setara) toggle panel tanpa merusak history line edit.
+- Fallback: jika terminal non-VT, perilaku sama seperti REPL saat ini.
+- Tidak ada dependency Node/React.
+
+Out of scope 6.23: mouse, split pane resize interaktif, tema warna penuh.
+
+#### Fase 6.24 — Background job paralel — **backlog**
+
+Lihat backlog 6.17.x (pool worker terbatas, permission per job-id, `/jobs cancel <id>`). Bisa dikerjakan paralel dengan 6.22 jika contributor terpisah.
+
+#### Fase 6.25+ — Kandidat lanjutan
+
+- Full slash catalog OpenClaude
+- Plugin system
+- MCP multi-transport (SSE/HTTP)
+- OAuth Bearer + beta header untuk request Anthropic native (melengkapi 6.18/6.21)
+
+#### Fase 6.22+ — Ringkasan backlog lama
+
+Candidates yang sudah masuk milestone di atas:
+
+- ~~Background sessions~~ — selesai (6.17); paralel → 6.24
+- ~~OAuth refresh~~ — selesai (6.21)
+- gRPC server → **6.22**
+- TUI lebih kaya → **6.23**
 
 ## 13. Testing Strategy
 

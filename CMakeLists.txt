@@ -1,9 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 
+option(AGNC_BUILD_GRPC "Build agnc serve gRPC server" ON)
+if(AGNC_BUILD_GRPC)
+    set(VCPKG_MANIFEST_FEATURES grpc CACHE STRING "vcpkg manifest features" FORCE)
+endif()
+
+# Release: hanya dependency vcpkg varian release (hindari grpc x64-windows-dbg ~30+ menit).
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(VCPKG_BUILD_TYPE "release" CACHE STRING "vcpkg: release-only dependencies" FORCE)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(VCPKG_BUILD_TYPE "debug" CACHE STRING "vcpkg: debug-only dependencies" FORCE)
+endif()
+
 # Auto-detect vcpkg toolchain sebelum project() — wajib untuk Open Folder VS (yyjson).
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Vcpkg.cmake)
 
-project(agnc VERSION 0.1.0 LANGUAGES C)
+project(agnc VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -38,15 +50,19 @@ add_executable(agnc
     src/cli/markdown_render.c
     src/cli/print.c
     src/cli/repl.c
+    src/cli/repl_jobs.c
     src/cli/line_edit.c
     src/config/config.c
+    src/config/oauth.c
     src/engine/conversation.c
     src/engine/query.c
     src/engine/session.c
+    src/engine/cost.c
     src/engine/skills.c
     src/engine/hooks.c
     src/providers/ollama.c
     src/providers/opencode.c
+    src/providers/anthropic.c
     src/net/http.c
     src/net/sse.c
     src/permissions/permissions.c
@@ -63,6 +79,7 @@ add_executable(agnc
     src/engine/tool_cache.c
     src/tools/web_fetch.c
     src/tools/todo_write.c
+    src/tools/sub_agent.c
     src/mcp/client.c
     src/mcp/jsonrpc.c
     src/mcp/registry.c
@@ -72,8 +89,16 @@ add_executable(agnc
     src/util/atomic_write.c
     src/util/path.c
     src/util/status.c
+    src/grpc/grpc_bridge.c
     ${AGNC_PROVIDER_SOURCES}
 )
+
+if(AGNC_BUILD_GRPC)
+    include(cmake/Grpc.cmake)
+    agnc_enable_grpc_server(agnc)
+else()
+    target_sources(agnc PRIVATE src/grpc/serve_stub.c)
+endif()
 
 target_include_directories(agnc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -145,9 +170,11 @@ if(AGNC_BUILD_TESTS)
     add_executable(test_atomic_write
         tests/test_atomic_write.c
         src/config/config.c
+        src/config/oauth.c
         src/util/atomic_write.c
         src/util/path.c
         src/util/status.c
+        src/net/http.c
     )
 
     target_include_directories(test_atomic_write PRIVATE
@@ -155,7 +182,7 @@ if(AGNC_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/generated
     )
 
-    target_link_libraries(test_atomic_write PRIVATE yyjson::yyjson cmocka::cmocka)
+    target_link_libraries(test_atomic_write PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
     target_sources(test_atomic_write PRIVATE
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
@@ -236,6 +263,7 @@ if(AGNC_BUILD_TESTS)
         ${AGNC_PROVIDER_SOURCES}
         ${AGNC_OPENCODE_SUPPORT_SOURCES}
         src/config/config.c
+        src/config/oauth.c
         src/util/atomic_write.c
         src/util/path.c
         src/util/status.c
@@ -255,6 +283,7 @@ if(AGNC_BUILD_TESTS)
     add_executable(test_config_provider
         tests/test_config_provider.c
         src/config/config.c
+        src/config/oauth.c
         src/util/path.c
         src/util/status.c
         src/util/atomic_write.c
@@ -276,16 +305,36 @@ if(AGNC_BUILD_TESTS)
 
     add_test(NAME test_config_provider COMMAND test_config_provider)
 
+    add_executable(test_oauth
+        tests/test_oauth.c
+        src/config/oauth.c
+        src/util/path.c
+        src/util/status.c
+        src/util/atomic_write.c
+        src/net/http.c
+    )
+
+    target_include_directories(test_oauth PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(test_oauth PRIVATE yyjson::yyjson CURL::libcurl cmocka::cmocka)
+    agnc_set_compiler_warnings(test_oauth)
+
+    add_test(NAME test_oauth COMMAND test_oauth)
+
     add_executable(test_session
         tests/test_session.c
         src/engine/conversation.c
         src/engine/session.c
         src/config/config.c
+        src/config/oauth.c
         src/util/atomic_write.c
         src/util/path.c
         src/util/status.c
         generated/agnc_integrations_gen.c
         src/integrations/registry.c
+        src/net/http.c
     )
 
     target_include_directories(test_session PRIVATE
@@ -293,7 +342,7 @@ if(AGNC_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/generated
     )
 
-    target_link_libraries(test_session PRIVATE yyjson::yyjson unofficial::sqlite3::sqlite3 cmocka::cmocka)
+    target_link_libraries(test_session PRIVATE yyjson::yyjson CURL::libcurl unofficial::sqlite3::sqlite3 cmocka::cmocka)
     agnc_set_compiler_warnings(test_session)
 
     add_test(NAME test_session COMMAND test_session)
@@ -341,6 +390,7 @@ if(AGNC_BUILD_TESTS)
     add_executable(test_mcp_registry
         tests/test_mcp_registry.c
         src/config/config.c
+        src/config/oauth.c
         src/mcp/client.c
         src/mcp/registry.c
         src/mcp/stdio.c
@@ -378,6 +428,7 @@ if(AGNC_BUILD_TESTS)
         src/mcp/jsonrpc.c
         src/mcp/tools.c
         src/config/config.c
+        src/config/oauth.c
         src/util/atomic_write.c
         src/util/path.c
         src/util/status.c
@@ -408,6 +459,7 @@ if(AGNC_BUILD_TESTS)
         src/mcp/jsonrpc.c
         src/mcp/tools.c
         src/config/config.c
+        src/config/oauth.c
         src/util/atomic_write.c
         src/util/path.c
         src/util/status.c
@@ -462,4 +514,27 @@ if(AGNC_BUILD_TESTS)
     agnc_set_compiler_warnings(test_web_fetch)
 
     add_test(NAME test_web_fetch COMMAND test_web_fetch)
+
+    if(AGNC_BUILD_GRPC)
+        add_executable(test_grpc_bridge
+            tests/test_grpc_bridge.c
+            tests/stubs/grpc_bridge_link_stubs.c
+            src/grpc/grpc_bridge.c
+            src/util/status.c
+        )
+        target_include_directories(test_grpc_bridge PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+        target_link_libraries(test_grpc_bridge PRIVATE cmocka::cmocka)
+        agnc_set_compiler_warnings(test_grpc_bridge)
+        add_test(NAME test_grpc_bridge COMMAND test_grpc_bridge)
+
+        add_executable(test_grpc_health tests/test_grpc_health.cpp)
+        target_include_directories(test_grpc_health PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/grpc")
+        target_link_libraries(test_grpc_health PRIVATE agnc_grpc_proto gRPC::grpc++)
+        set_target_properties(test_grpc_health PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+        agnc_set_compiler_warnings(test_grpc_health)
+        add_dependencies(test_grpc_health agnc_grpc_proto)
+        add_test(NAME test_grpc_health COMMAND test_grpc_health)
+    endif()
 endif()

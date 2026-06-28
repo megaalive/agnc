@@ -40,6 +40,17 @@ void agnc_sse_parser_set_live_print(agnc_sse_parser_t *parser, int enabled)
     }
 }
 
+void agnc_sse_parser_set_delta_callback(
+    agnc_sse_parser_t *parser,
+    agnc_sse_delta_fn callback,
+    void *user_data)
+{
+    if (parser != NULL) {
+        parser->stream_delta_fn = callback;
+        parser->stream_delta_ctx = user_data;
+    }
+}
+
 void agnc_sse_parser_set_assistant_content(agnc_sse_parser_t *parser, const char *content)
 {
     if (parser == NULL) {
@@ -50,6 +61,43 @@ void agnc_sse_parser_set_assistant_content(agnc_sse_parser_t *parser, const char
     parser->last_content_chunk = agnc_strdup_local(content != NULL ? content : "");
     parser->printed_any =
         (parser->last_content_chunk != NULL && parser->last_content_chunk[0] != '\0') ? 1 : 0;
+}
+
+agnc_status_t agnc_sse_parser_add_tool_call(
+    agnc_sse_parser_t *parser,
+    const char *id,
+    const char *name,
+    const char *arguments_json)
+{
+    agnc_sse_tool_call_t *slot;
+    size_t index;
+
+    if (parser == NULL || name == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (parser->tool_call_count >= AGNC_SSE_MAX_TOOL_CALLS) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    index = parser->tool_call_count;
+    slot = &parser->tool_calls[index];
+    slot->id = agnc_strdup_local(id != NULL ? id : "call");
+    slot->name = agnc_strdup_local(name);
+    slot->arguments = agnc_strdup_local(arguments_json != NULL ? arguments_json : "{}");
+    if (slot->name == NULL || slot->arguments == NULL) {
+        free(slot->id);
+        free(slot->name);
+        free(slot->arguments);
+        slot->id = NULL;
+        slot->name = NULL;
+        slot->arguments = NULL;
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    parser->tool_call_count++;
+    parser->has_tool_calls = 1;
+    return AGNC_STATUS_OK;
 }
 
 void agnc_sse_parser_free(agnc_sse_parser_t *parser)
@@ -528,8 +576,22 @@ static agnc_status_t agnc_sse_accumulate_content(agnc_sse_parser_t *parser, cons
 
     parser->last_content_chunk = updated;
 
-    /* Mode interaktif: cetak delta inkremental mentah, atau suffix jika chunk kumulatif. */
-    if (parser->stream_mode && parser->stream_live_print) {
+    if (parser->stream_mode && parser->stream_delta_fn != NULL) {
+        /* Headless/gRPC: delta ke callback, bukan stdout. */
+        if (cumulative) {
+            size_t new_len = strlen(parser->last_content_chunk);
+            if (new_len > old_len) {
+                parser->stream_delta_fn(
+                    parser->last_content_chunk + old_len,
+                    new_len - old_len,
+                    parser->stream_delta_ctx);
+                parser->printed_any = 1;
+            }
+        } else {
+            parser->stream_delta_fn(text, chunk_len, parser->stream_delta_ctx);
+            parser->printed_any = 1;
+        }
+    } else if (parser->stream_mode && parser->stream_live_print) {
         if (cumulative) {
             size_t new_len = strlen(parser->last_content_chunk);
             if (new_len > old_len) {

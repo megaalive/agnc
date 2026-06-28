@@ -237,7 +237,6 @@ void agnc_console_input_begin(agnc_console_input_session_t *session)
 
         raw &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
         /* Biarkan ENABLE_QUICK_EDIT_MODE: seleksi mouse + paste klik kanan di PowerShell. */
-        FlushConsoleInputBuffer(in);
         SetConsoleMode(in, raw);
         session->active = 1;
     }

@@ -465,7 +465,7 @@ static agnc_status_t agnc_opencode_create_session(
         return AGNC_STATUS_OUT_OF_MEMORY;
     }
 
-    status = agnc_http_post(url, auth_header, "{}", &response, &error_message, cancel_flag);
+    status = agnc_http_post(url, auth_header, "{}", &response, &error_message, cancel_flag, NULL);
     free(url);
     free(auth_header);
 
@@ -541,6 +541,105 @@ static agnc_status_t agnc_opencode_ensure_session_id(
     return AGNC_STATUS_OK;
 }
 
+static int agnc_opencode_part_is_ignored(yyjson_val *part)
+{
+    yyjson_val *ignored_val;
+
+    if (part == NULL) {
+        return 0;
+    }
+
+    ignored_val = yyjson_obj_get(part, "ignored");
+    return ignored_val != NULL && yyjson_is_bool(ignored_val) && yyjson_get_bool(ignored_val);
+}
+
+static char *agnc_opencode_append_chunk(char *combined, size_t *combined_len, size_t *combined_cap, const char *chunk)
+{
+    size_t chunk_len;
+
+    if (chunk == NULL || chunk[0] == '\0') {
+        return combined;
+    }
+
+    chunk_len = strlen(chunk);
+    if (*combined_len + chunk_len + 2 > *combined_cap) {
+        size_t new_cap = *combined_cap == 0 ? chunk_len + 64 : *combined_cap * 2;
+        char *resized;
+
+        while (new_cap < *combined_len + chunk_len + 2) {
+            new_cap *= 2;
+        }
+
+        resized = (char *)realloc(combined, new_cap);
+        if (resized == NULL) {
+            free(combined);
+            return NULL;
+        }
+
+        combined = resized;
+        *combined_cap = new_cap;
+    }
+
+    if (*combined_len > 0) {
+        combined[(*combined_len)++] = '\n';
+    }
+    memcpy(combined + *combined_len, chunk, chunk_len);
+    *combined_len += chunk_len;
+    combined[*combined_len] = '\0';
+    return combined;
+}
+
+static char *agnc_opencode_collect_tool_output(yyjson_val *part)
+{
+    yyjson_val *state_val;
+    yyjson_val *status_val;
+    yyjson_val *output_val;
+    yyjson_val *error_val;
+    const char *status;
+    const char *tool_name;
+    char line[512];
+
+    state_val = yyjson_obj_get(part, "state");
+    if (state_val == NULL || !yyjson_is_obj(state_val)) {
+        return NULL;
+    }
+
+    status_val = yyjson_obj_get(state_val, "status");
+    if (status_val == NULL || !yyjson_is_str(status_val)) {
+        return NULL;
+    }
+
+    status = yyjson_get_str(status_val);
+    tool_name = "tool";
+    {
+        yyjson_val *tool_val = yyjson_obj_get(part, "tool");
+
+        if (tool_val != NULL && yyjson_is_str(tool_val)) {
+            tool_name = yyjson_get_str(tool_val);
+        }
+    }
+
+    if (strcmp(status, "completed") == 0) {
+        output_val = yyjson_obj_get(state_val, "output");
+        if (output_val != NULL && yyjson_is_str(output_val) && yyjson_get_str(output_val)[0] != '\0') {
+            return agnc_strdup_local(yyjson_get_str(output_val));
+        }
+        return NULL;
+    }
+
+    if (strcmp(status, "error") == 0) {
+        error_val = yyjson_obj_get(state_val, "error");
+        if (error_val != NULL && yyjson_is_str(error_val)) {
+            snprintf(line, sizeof(line), "error (%s): %s", tool_name, yyjson_get_str(error_val));
+        } else {
+            snprintf(line, sizeof(line), "error (%s): tool failed", tool_name);
+        }
+        return agnc_strdup_local(line);
+    }
+
+    return NULL;
+}
+
 static char *agnc_opencode_collect_text_parts(yyjson_val *parts)
 {
     size_t index;
@@ -548,6 +647,9 @@ static char *agnc_opencode_collect_text_parts(yyjson_val *parts)
     char *combined = NULL;
     size_t combined_len = 0;
     size_t combined_cap = 0;
+    char *tool_fallback = NULL;
+    size_t tool_fallback_len = 0;
+    size_t tool_fallback_cap = 0;
 
     if (parts == NULL || !yyjson_is_arr(parts)) {
         return agnc_strdup_local("");
@@ -560,56 +662,63 @@ static char *agnc_opencode_collect_text_parts(yyjson_val *parts)
         yyjson_val *text_val;
         const char *type;
         const char *text;
-        size_t text_len;
 
         if (part == NULL || !yyjson_is_obj(part)) {
             continue;
         }
 
         type_val = yyjson_obj_get(part, "type");
-        text_val = yyjson_obj_get(part, "text");
-        if (type_val == NULL || !yyjson_is_str(type_val) || text_val == NULL || !yyjson_is_str(text_val)) {
+        if (type_val == NULL || !yyjson_is_str(type_val)) {
             continue;
         }
 
         type = yyjson_get_str(type_val);
-        if (strcmp(type, "text") != 0) {
+        if (strcmp(type, "text") == 0) {
+            if (agnc_opencode_part_is_ignored(part)) {
+                continue;
+            }
+
+            text_val = yyjson_obj_get(part, "text");
+            if (text_val == NULL || !yyjson_is_str(text_val)) {
+                continue;
+            }
+
+            text = yyjson_get_str(text_val);
+            combined = agnc_opencode_append_chunk(combined, &combined_len, &combined_cap, text);
+            if (combined == NULL && text[0] != '\0') {
+                free(tool_fallback);
+                return NULL;
+            }
             continue;
         }
 
-        text = yyjson_get_str(text_val);
-        text_len = strlen(text);
-        if (combined_len + text_len + 2 > combined_cap) {
-            size_t new_cap = combined_cap == 0 ? text_len + 64 : combined_cap * 2;
-            char *resized;
+        if (strcmp(type, "tool") == 0) {
+            char *tool_text = agnc_opencode_collect_tool_output(part);
 
-            while (new_cap < combined_len + text_len + 2) {
-                new_cap *= 2;
+            if (tool_text != NULL) {
+                tool_fallback = agnc_opencode_append_chunk(
+                    tool_fallback, &tool_fallback_len, &tool_fallback_cap, tool_text);
+                free(tool_text);
+                if (tool_fallback == NULL) {
+                    free(combined);
+                    return NULL;
+                }
             }
-
-            resized = (char *)realloc(combined, new_cap);
-            if (resized == NULL) {
-                free(combined);
-                return NULL;
-            }
-
-            combined = resized;
-            combined_cap = new_cap;
         }
-
-        if (combined_len > 0) {
-            combined[combined_len++] = '\n';
-        }
-        memcpy(combined + combined_len, text, text_len);
-        combined_len += text_len;
-        combined[combined_len] = '\0';
     }
 
-    if (combined == NULL) {
-        return agnc_strdup_local("");
+    if (combined != NULL && combined[0] != '\0') {
+        free(tool_fallback);
+        return combined;
     }
 
-    return combined;
+    free(combined);
+    if (tool_fallback != NULL && tool_fallback[0] != '\0') {
+        return tool_fallback;
+    }
+
+    free(tool_fallback);
+    return agnc_strdup_local("");
 }
 
 /*
@@ -726,7 +835,7 @@ agnc_status_t agnc_opencode_run_turn(
     }
 
     auth_header = agnc_opencode_build_auth_header(config);
-    status = agnc_http_post(url, auth_header, request_json, &response, error_message, cancel_flag);
+    status = agnc_http_post(url, auth_header, request_json, &response, error_message, cancel_flag, NULL);
 
     free(url);
     free(auth_header);

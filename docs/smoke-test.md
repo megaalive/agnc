@@ -95,6 +95,39 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] Config `providers.ollama` + `provider.active: ollama` — chat tanpa `AGNC_API_KEY`
 - [ ] REPL `/model <nama>` ganti model; discovery lengkap via `/models ollama`
 
+## Background jobs (Fase 6.17)
+
+- [ ] REPL: `/bg say hello` atau prefix `&prompt` — job masuk antrian, notifikasi saat selesai
+- [ ] `/jobs` — daftar queued + running; `/jobs clear` kosongkan antrian tanpa cancel running
+- [ ] `/jobs cancel` — batalkan job yang sedang jalan
+- [ ] Ctrl+C saat job running — cancel job, REPL tetap hidup
+
+## Anthropic + OAuth (Fase 6.18 / 6.21)
+
+- [ ] `agnc oauth set anthropic --token ...` atau OAuth flow; `agnc oauth status anthropic`
+- [ ] `agnc oauth refresh anthropic` — refresh token sebelum expiry
+- [ ] Config `providers.anthropic` + `"oauth": true` — chat via Messages API native
+- [ ] `agnc doctor` — baris `anthropic` / `oauth:anthropic`
+
+## Sub-agent (Fase 6.19)
+
+- [ ] Tool `sub_agent` aktif di config — model dapat delegasi prompt isolasi (depth max 1)
+- [ ] `--print --yes` dengan prompt yang minta sub-agent — jawaban ringkas tanpa crash
+
+## Cost tracking (Fase 6.20)
+
+- [ ] REPL `/cost` — ringkasan biaya sesi (jika provider/model punya tarif)
+- [ ] Total cost persist di meta SQLite sesi
+
+## gRPC server (Fase 6.22)
+
+- [ ] Build dengan gRPC: `.\scripts\build.ps1 release` (atau `-DAGNC_BUILD_GRPC=OFF` untuk skip)
+- [ ] `agnc serve --listen 127.0.0.1:50051` — bind OK
+- [ ] `grpcurl -plaintext 127.0.0.1:50051 list` — reflection (tanpa `-proto`)
+- [ ] `grpcurl ... agnc.v1.Agent/Health` — versi `0.1.0`
+- [ ] `RunQuery` / `StreamQuery` dengan provider aktif valid — `status: ok`, delta live di stream
+- [ ] `ctest` — `test_grpc_bridge`, `test_grpc_health` lulus
+
 ## Catatan
 
 - Test provider live (OpenRouter/Gemini) bersifat opsional; set `AGNC_TEST_LIVE_OPENROUTER=1` hanya saat regression eksplisit.

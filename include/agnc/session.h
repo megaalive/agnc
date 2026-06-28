@@ -97,4 +97,8 @@ agnc_status_t agnc_session_meta_get(const char *path, const char *key, char **va
 agnc_status_t agnc_session_meta_set(const char *path, const char *key, const char *value);
 agnc_status_t agnc_session_meta_delete(const char *path, const char *key);
 
+agnc_status_t agnc_session_cost_load(const char *path, double *total_usd_out);
+agnc_status_t agnc_session_cost_accumulate(const char *path, double delta_usd);
+agnc_status_t agnc_session_cost_reset(const char *path);
+
 #endif /* AGNC_SESSION_H */

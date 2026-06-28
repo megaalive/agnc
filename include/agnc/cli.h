@@ -29,6 +29,8 @@ typedef struct {
     int no_tools;     /* `agnc --no-tools` — chat tanpa tool schema */
     int auto_approve; /* `agnc --yes` — setujui shell tanpa prompt */
     char *print_prompt; /* Prompt untuk mode headless */
+    int show_serve;   /* `agnc serve` */
+    char *serve_listen; /* `--listen HOST:PORT` */
 } agnc_cli_options_t;
 
 /* Implementasi di src/cli/args.c — diekspor agar bisa dipanggil lintas TU. */
@@ -84,5 +86,8 @@ agnc_status_t agnc_cli_models_parse_query(
 
 /* Jalankan REPL interaktif (Fase 4). */
 int agnc_cli_run_interactive(void);
+
+/* Jalankan gRPC server headless (`agnc serve`). */
+int agnc_cli_run_serve(const char *listen_address);
 
 #endif /* AGNC_CLI_H */

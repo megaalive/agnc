@@ -8,6 +8,7 @@
 
 #include "agnc/cli.h"
 #include "agnc/console.h"
+#include "agnc/oauth.h"
 #include "agnc/version.h"
 
 #include <stdio.h>
@@ -36,6 +37,10 @@ int main(int argc, char **argv)
     } else if (options.show_models) {
         exit_code = agnc_cli_run_models(
             options.models_provider_filter, options.models_name_filter, options.models_json);
+    } else if (argc >= 2 && strcmp(argv[1], "oauth") == 0) {
+        exit_code = agnc_cli_run_oauth(argc, argv);
+    } else if (options.show_serve) {
+        exit_code = agnc_cli_run_serve(options.serve_listen);
     } else if (options.show_print) {
         exit_code = agnc_cli_run_print(options.print_prompt, options.no_tools, options.auto_approve);
     } else if (options.show_interactive) {

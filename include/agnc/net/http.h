@@ -31,12 +31,14 @@ agnc_status_t agnc_http_get(
     volatile int *cancel_flag);
 
 /* POST sinkron; mengembalikan body respons utuh (non-SSE). */
+/* POST sinkron; extra_header opsional (mis. anthropic-version). */
 agnc_status_t agnc_http_post(
     const char *url,
     const char *auth_header,
     const char *json_body,
     char **response_body,
     char **error_message,
-    volatile int *cancel_flag);
+    volatile int *cancel_flag,
+    const char *extra_header);
 
 #endif

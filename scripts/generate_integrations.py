@@ -22,6 +22,7 @@ TRANSPORT_MAP = {
     "gemini-native": "AGNC_TRANSPORT_GEMINI_NATIVE",
     "local": "AGNC_TRANSPORT_LOCAL",
     "opencode-native": "AGNC_TRANSPORT_OPENCODE_NATIVE",
+    "anthropic-native": "AGNC_TRANSPORT_ANTHROPIC_NATIVE",
 }
 
 

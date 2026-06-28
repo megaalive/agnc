@@ -43,6 +43,7 @@ typedef struct {
     int tool_web_fetch;
     int tool_todo_write;
     int tool_find_symbol;
+    int tool_sub_agent;
     int ask_shell_permission;
     int ask_write_permission;
     int ask_mcp_permission;

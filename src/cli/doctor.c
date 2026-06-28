@@ -17,6 +17,8 @@
 #include "agnc/tool_path.h"
 #include "agnc/ollama.h"
 #include "agnc/opencode.h"
+#include "agnc/anthropic.h"
+#include "agnc/oauth.h"
 #include "agnc/skills.h"
 #include "agnc/hooks.h"
 #include "agnc/version.h"
@@ -172,6 +174,37 @@ int agnc_cli_run_doctor(void)
             agnc_doctor_print_status("opencode", "ok", detail);
         } else {
             agnc_doctor_print_status("opencode", "missing", "start OpenCode (opencode serve) on :4096");
+        }
+    }
+
+    /* Anthropic native (opsional) — butuh ANTHROPIC_API_KEY atau oauth token. */
+    {
+        char detail[256];
+        const char *api_key = getenv("ANTHROPIC_API_KEY");
+        agnc_status_t anthropic_status =
+            agnc_anthropic_probe("https://api.anthropic.com", api_key, detail, sizeof(detail));
+
+        if (anthropic_status == AGNC_STATUS_OK) {
+            agnc_doctor_print_status("anthropic", "ok", detail);
+        } else if (api_key != NULL && api_key[0] != '\0') {
+            agnc_doctor_print_status("anthropic", "error", detail);
+        } else {
+            agnc_doctor_print_status("anthropic", "skipped", "set ANTHROPIC_API_KEY or agnc oauth set anthropic");
+        }
+    }
+
+    {
+        char detail[256];
+        int oauth_health = agnc_oauth_token_health("anthropic", detail, sizeof(detail));
+
+        if (oauth_health < 0) {
+            agnc_doctor_print_status("oauth:anthropic", "skipped", detail);
+        } else if (oauth_health == 2) {
+            agnc_doctor_print_status("oauth:anthropic", "error", detail);
+        } else if (oauth_health == 1) {
+            agnc_doctor_print_status("oauth:anthropic", "warn", detail);
+        } else {
+            agnc_doctor_print_status("oauth:anthropic", "ok", detail);
         }
     }
 

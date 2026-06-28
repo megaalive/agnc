@@ -6,6 +6,7 @@
 
 #include "agnc/config.h"
 #include "agnc/atomic_write.h"
+#include "agnc/oauth.h"
 #include "agnc/path.h"
 #include "agnc/provider.h"
 
@@ -414,6 +415,23 @@ static agnc_status_t agnc_config_resolve_provider(
     }
 
     if (config->api_key == NULL && entry != NULL) {
+        value = yyjson_obj_get(entry, "oauth");
+        if (value != NULL && yyjson_is_bool(value) && yyjson_get_bool(value) && config->provider_id != NULL) {
+            if (agnc_oauth_load_fresh_access_token(config->provider_id, &config->api_key) != AGNC_STATUS_OK) {
+                agnc_oauth_token_t oauth_token;
+
+                agnc_oauth_token_init(&oauth_token);
+                if (agnc_oauth_token_load(config->provider_id, &oauth_token) == AGNC_STATUS_OK &&
+                    oauth_token.access_token != NULL) {
+                    config->api_key = oauth_token.access_token;
+                    oauth_token.access_token = NULL;
+                }
+                agnc_oauth_token_free(&oauth_token);
+            }
+        }
+    }
+
+    if (config->api_key == NULL && entry != NULL) {
         value = yyjson_obj_get(entry, "api_key_env");
         if (value != NULL && yyjson_is_str(value)) {
             config->api_key = agnc_config_get_env_strict(yyjson_get_str(value));
@@ -729,11 +747,12 @@ static void agnc_config_apply_tools_permissions(yyjson_val *root, agnc_config_t 
             config->tool_web_fetch = agnc_config_json_array_contains(enabled, "web_fetch");
             config->tool_todo_write = agnc_config_json_array_contains(enabled, "todo_write");
             config->tool_find_symbol = agnc_config_json_array_contains(enabled, "find_symbol");
+            config->tool_sub_agent = agnc_config_json_array_contains(enabled, "sub_agent");
             config->enable_tools = config->tool_read_file || config->tool_shell ||
                                    config->tool_write_file || config->tool_edit_file ||
                                    config->tool_grep || config->tool_glob ||
                                    config->tool_web_fetch || config->tool_todo_write ||
-                                   config->tool_find_symbol;
+                                   config->tool_find_symbol || config->tool_sub_agent;
         }
     }
 
@@ -1035,6 +1054,7 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_web_fetch = 0;
     config->tool_todo_write = 0;
     config->tool_find_symbol = 1;
+    config->tool_sub_agent = 1;
     config->skills_enabled = 1;
     config->hooks_enabled = 0;
     config->ask_shell_permission = 1;

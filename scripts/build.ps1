@@ -47,16 +47,33 @@ Write-Host "Configuration: $Configuration"
 Write-Host "Preset: $preset"
 Write-Host "Output: $binary"
 
+if ($Configuration -eq "Release") {
+    Write-Host "Release: vcpkg hanya build dependency release (bukan grpc debug)."
+} elseif ($Configuration -eq "Debug") {
+    Write-Host "Debug: vcpkg hanya build dependency debug."
+}
+
 $env:VCPKG_ROOT = Join-Path $vsPath "VC\vcpkg"
 $toolchain = Join-Path $env:VCPKG_ROOT "scripts\buildsystems\vcpkg.cmake"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
+
+$cmakeConfigureArgs = @(
+    "--preset", $preset,
+    "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
+    "-DVCPKG_MANIFEST_MODE=ON"
+)
+if ($Configuration -eq "Release") {
+    $cmakeConfigureArgs += "-DVCPKG_BUILD_TYPE=release"
+} elseif ($Configuration -eq "Debug") {
+    $cmakeConfigureArgs += "-DVCPKG_BUILD_TYPE=debug"
+}
 
 Push-Location $root
 try {
     & $devShell -Arch amd64 -SkipAutomaticLocation | Out-Null
     Write-Host "Generating provider registry..."
     python (Join-Path $root "scripts\generate_integrations.py")
-    & $cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_MANIFEST_MODE=ON"
+    & $cmake @cmakeConfigureArgs
     & $cmake --build --preset $preset
 
     if (Test-Path $binary) {

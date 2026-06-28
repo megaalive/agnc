@@ -7,6 +7,8 @@
 #ifndef AGNC_TOOL_H
 #define AGNC_TOOL_H
 
+#include "agnc/config.h"
+#include "agnc/query.h"
 #include "agnc/status.h"
 
 agnc_status_t agnc_tool_read_file_execute(const char *arguments_json, char **result_text);
@@ -40,6 +42,13 @@ agnc_status_t agnc_tool_todo_write_execute(const char *arguments_json, char **re
 
 agnc_status_t agnc_tool_find_symbol_execute(const char *arguments_json, char **result_text);
 const char *agnc_tool_find_symbol_name_preview(const char *arguments_json);
+
+agnc_status_t agnc_tool_sub_agent_execute(
+    const agnc_config_t *parent_config,
+    const agnc_query_options_t *parent_options,
+    int agent_depth,
+    const char *arguments_json,
+    char **result_text);
 
 /* Invalidasi indeks ctags in-memory (setelah write/edit atau reset sesi). */
 void agnc_find_symbol_index_invalidate(void);

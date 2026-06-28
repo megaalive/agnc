@@ -14,6 +14,8 @@
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/opencode.h"
+#include "agnc/anthropic.h"
+#include "agnc/cost.h"
 #include "agnc/session.h"
 #include "agnc/skills.h"
 #include "agnc/status.h"
@@ -75,6 +77,35 @@ static void agnc_query_accumulate_usage(const agnc_sse_parser_t *parser, const a
     }
 }
 
+static void agnc_query_accumulate_cost(
+    const agnc_config_t *config,
+    const agnc_sse_parser_t *parser,
+    const agnc_query_options_t *options)
+{
+    long prompt_tokens;
+    long completion_tokens;
+    double cost_usd;
+
+    if (config == NULL || parser == NULL || options == NULL || options->session_sqlite_path == NULL) {
+        return;
+    }
+
+    if (!agnc_sse_parser_has_usage(parser)) {
+        return;
+    }
+
+    prompt_tokens = agnc_sse_parser_get_prompt_tokens(parser);
+    completion_tokens = agnc_sse_parser_get_completion_tokens(parser);
+    cost_usd = agnc_cost_estimate_turn_usd(
+        config->model,
+        config->provider_id,
+        prompt_tokens,
+        completion_tokens);
+    if (cost_usd > 0.0) {
+        (void)agnc_session_cost_accumulate(options->session_sqlite_path, cost_usd);
+    }
+}
+
 static char *agnc_strdup_local(const char *value)
 {
 #ifdef _MSC_VER
@@ -128,6 +159,39 @@ static void agnc_query_report_repl_error(
     }
 
     agnc_console_print_chat_system(line);
+}
+
+static int agnc_query_emit_last_tool_fallback(
+    const agnc_conversation_t *conversation,
+    int chat_assistant_timestamp,
+    int suppress_chat_output)
+{
+    size_t index;
+
+    if (suppress_chat_output || conversation == NULL) {
+        return 0;
+    }
+
+    for (index = conversation->count; index > 0; index--) {
+        const agnc_conversation_message_t *message = agnc_conversation_at(conversation, index - 1);
+
+        if (message == NULL || message->role == NULL) {
+            continue;
+        }
+        if (strcmp(message->role, "user") == 0) {
+            break;
+        }
+        if (strcmp(message->role, "tool") == 0 && message->content != NULL && message->content[0] != '\0') {
+            if (chat_assistant_timestamp) {
+                agnc_console_print_chat_system("model tanpa jawaban teks; hasil tool:");
+                agnc_console_print_chat_assistant_begin();
+            }
+            agnc_console_print_assistant_body(message->content);
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 static agnc_status_t agnc_stream_callback(void *user_data, const char *chunk, size_t length)
@@ -348,6 +412,36 @@ static void agnc_append_todo_write_tool(yyjson_mut_doc *doc, yyjson_mut_val *too
     yyjson_mut_obj_add_str(doc, todos_obj, "type", "array");
     yyjson_mut_obj_add_str(doc, todos_obj, "description", "Todo items with id, content, and status.");
     yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "todos"));
+    yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
+}
+
+static void agnc_append_sub_agent_tool(yyjson_mut_doc *doc, yyjson_mut_val *tools_arr)
+{
+    yyjson_mut_val *tool_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *function_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *parameters_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *properties_obj = yyjson_mut_obj(doc);
+    yyjson_mut_val *required_arr = yyjson_mut_arr(doc);
+
+    yyjson_mut_arr_append(tools_arr, tool_obj);
+    yyjson_mut_obj_add_str(doc, tool_obj, "type", "function");
+    yyjson_mut_obj_add_val(doc, tool_obj, "function", function_obj);
+    yyjson_mut_obj_add_str(doc, function_obj, "name", "sub_agent");
+    yyjson_mut_obj_add_str(
+        doc,
+        function_obj,
+        "description",
+        "Delegate a sub-task to an isolated agent loop; returns final assistant answer only.");
+    yyjson_mut_obj_add_val(doc, function_obj, "parameters", parameters_obj);
+    yyjson_mut_obj_add_str(doc, parameters_obj, "type", "object");
+    yyjson_mut_obj_add_val(doc, parameters_obj, "properties", properties_obj);
+    agnc_schema_add_string_prop(doc, properties_obj, "prompt", "Task prompt for the sub-agent.");
+    agnc_schema_add_string_prop(
+        doc,
+        properties_obj,
+        "max_iterations",
+        "Optional cap on tool iterations for the sub-agent.");
+    yyjson_mut_arr_append(required_arr, yyjson_mut_str(doc, "prompt"));
     yyjson_mut_obj_add_val(doc, parameters_obj, "required", required_arr);
 }
 
@@ -589,6 +683,9 @@ static char *agnc_build_request_json(
         if (config->tool_todo_write) {
             agnc_append_todo_write_tool(doc, tools_arr);
         }
+        if (config->tool_sub_agent) {
+            agnc_append_sub_agent_tool(doc, tools_arr);
+        }
 
         agnc_append_mcp_tools(doc, tools_arr, mcp_catalog);
     }
@@ -683,7 +780,9 @@ static agnc_status_t agnc_execute_tool(
     int auto_approve,
     const agnc_mcp_registry_t *mcp_registry,
     const agnc_mcp_tool_catalog_t *mcp_catalog,
-    agnc_mcp_session_t *mcp_session_reconnect)
+    agnc_mcp_session_t *mcp_session_reconnect,
+    const agnc_query_options_t *query_options,
+    int agent_depth)
 {
     agnc_status_t status;
     int allowed = 1;
@@ -942,6 +1041,11 @@ static agnc_status_t agnc_execute_tool(
         return agnc_tool_todo_write_execute(tool_arguments, tool_result);
     }
 
+    if (strcmp(tool_name, "sub_agent") == 0) {
+        agnc_query_log_tool_line(config, interactive_repl, "sub_agent");
+        return agnc_tool_sub_agent_execute(config, query_options, agent_depth, tool_arguments, tool_result);
+    }
+
     *tool_result = agnc_strdup_local("error: unsupported tool");
     return AGNC_STATUS_TOOL_FAILED;
 }
@@ -1014,6 +1118,16 @@ static agnc_status_t agnc_run_provider_turn(
             session_sqlite_path,
             system_text,
             user_text,
+            parser,
+            error_message,
+            cancel_flag);
+    }
+
+    if (gateway->transport_kind == AGNC_TRANSPORT_ANTHROPIC_NATIVE) {
+        return agnc_anthropic_run_turn(
+            config,
+            conversation,
+            mcp_catalog,
             parser,
             error_message,
             cancel_flag);
@@ -1254,7 +1368,9 @@ agnc_status_t agnc_query_run(
     volatile int *cancel_flag = NULL;
     int stream_live_print = 0;
     int chat_assistant_timestamp = 0;
+    int suppress_chat_output = 0;
     int auto_approve = 0;
+    int agent_depth = 0;
     char *system_prompt = NULL;
     agnc_mcp_registry_t local_registry;
     agnc_mcp_tool_catalog_t local_catalog;
@@ -1272,7 +1388,9 @@ agnc_status_t agnc_query_run(
         cancel_flag = options->cancel_flag;
         stream_live_print = options->stream_live_print;
         chat_assistant_timestamp = options->chat_assistant_timestamp;
+        suppress_chat_output = options->suppress_chat_output;
         auto_approve = options->auto_approve;
+        agent_depth = options->agent_depth;
 
         if (options->usage_prompt_tokens != NULL) {
             *options->usage_prompt_tokens = -1;
@@ -1350,10 +1468,21 @@ agnc_status_t agnc_query_run(
 
         agnc_sse_parser_free(&parser);
         agnc_sse_parser_init(&parser, config->stream, config->verbose);
-        agnc_sse_parser_set_live_print(&parser, stream_live_print);
+        if (options != NULL && options->stream_delta_fn != NULL) {
+            agnc_sse_parser_set_delta_callback(
+                &parser, options->stream_delta_fn, options->stream_delta_ctx);
+        } else {
+            agnc_sse_parser_set_live_print(&parser, stream_live_print);
+        }
 
-        if (chat_assistant_timestamp) {
+        int saved_sub_agent = config->tool_sub_agent;
+
+        if (chat_assistant_timestamp && !suppress_chat_output) {
             agnc_console_spinner_start();
+        }
+
+        if (agent_depth > 0) {
+            config->tool_sub_agent = 0;
         }
 
         status = agnc_run_provider_turn(
@@ -1365,7 +1494,9 @@ agnc_status_t agnc_query_run(
             mcp_catalog,
             session_sqlite_path);
 
-        if (chat_assistant_timestamp) {
+        config->tool_sub_agent = saved_sub_agent;
+
+        if (chat_assistant_timestamp && !suppress_chat_output) {
             agnc_console_spinner_stop();
         }
 
@@ -1374,28 +1505,32 @@ agnc_status_t agnc_query_run(
         }
 
         agnc_query_accumulate_usage(&parser, options);
+        agnc_query_accumulate_cost(config, &parser, options);
 
         agnc_sse_parser_finalize_turn(&parser);
 
         if (!agnc_sse_parser_has_tool_calls(&parser) || agnc_sse_parser_get_tool_call_count(&parser) == 0) {
             const char *content = agnc_sse_parser_get_content(&parser);
+            int has_content = content != NULL && content[0] != '\0';
 
-            if (agnc_sse_parser_printed_any(&parser)) {
+            if (!suppress_chat_output && (has_content || agnc_sse_parser_printed_any(&parser))) {
                 if (chat_assistant_timestamp) {
                     agnc_console_print_chat_assistant_begin();
                 }
-                agnc_console_print_assistant_body(content);
+                if (has_content) {
+                    agnc_console_print_assistant_body(content);
+                }
                 any_output = 1;
             }
 
-            if (content != NULL && content[0] != '\0') {
+            if (has_content) {
                 status = agnc_conversation_push(conversation, "assistant", content, NULL, NULL, NULL);
                 if (status != AGNC_STATUS_OK) {
                     goto cleanup;
                 }
             }
 
-            if (any_output && !chat_assistant_timestamp) {
+            if (any_output && !chat_assistant_timestamp && !suppress_chat_output) {
                 fputc('\n', stdout);
             }
             status = AGNC_STATUS_OK;
@@ -1485,7 +1620,9 @@ agnc_status_t agnc_query_run(
                 auto_approve,
                 mcp_registry,
                 mcp_catalog,
-                options != NULL ? options->mcp_session : NULL);
+                options != NULL ? options->mcp_session : NULL,
+                options,
+                agent_depth);
             free(arguments);
 
             if (tool_result == NULL) {
@@ -1536,15 +1673,25 @@ cleanup:
         agnc_query_fire_hook(config, AGNC_HOOK_EVENT_POST_TURN, &hook_input, NULL);
     }
 
-    if (chat_assistant_timestamp) {
+    if (chat_assistant_timestamp && !suppress_chat_output) {
         agnc_console_spinner_stop();
     }
 
     if (status == AGNC_STATUS_CANCELLED) {
-        fputc('\n', stdout);
+        if (!suppress_chat_output) {
+            fputc('\n', stdout);
+        }
         fprintf(stderr, "agnc: request cancelled\n");
-    } else if (status == AGNC_STATUS_OK && !any_output) {
-        fprintf(stderr, "agnc: warning: provider returned no visible output (enable runtime.verbose for details)\n");
+    } else if (status == AGNC_STATUS_OK && !any_output && !suppress_chat_output) {
+        if (agnc_query_emit_last_tool_fallback(conversation, chat_assistant_timestamp, suppress_chat_output)) {
+            any_output = 1;
+        } else {
+            fprintf(stderr, "agnc: warning: provider returned no visible output (enable runtime.verbose for details)\n");
+            if (chat_assistant_timestamp) {
+                agnc_console_print_chat_system(
+                    "model tidak mengembalikan jawaban (aktifkan runtime.verbose atau ulangi prompt)");
+            }
+        }
     }
 
     if (status != AGNC_STATUS_OK && status != AGNC_STATUS_CANCELLED) {
@@ -1552,6 +1699,13 @@ cleanup:
             fprintf(stderr, "agnc: %s\n", error_message);
         } else if (agnc_sse_parser_get_error(&parser) != NULL) {
             fprintf(stderr, "agnc: %s\n", agnc_sse_parser_get_error(&parser));
+        }
+        if (options != NULL && options->error_message_out != NULL && *options->error_message_out == NULL) {
+            if (error_message != NULL) {
+                *options->error_message_out = agnc_strdup_local(error_message);
+            } else if (agnc_sse_parser_get_error(&parser) != NULL) {
+                *options->error_message_out = agnc_strdup_local(agnc_sse_parser_get_error(&parser));
+            }
         }
         agnc_query_report_repl_error(
             chat_assistant_timestamp,

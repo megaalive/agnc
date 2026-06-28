@@ -15,6 +15,8 @@
 #include "agnc/permissions.h"
 #include "agnc/provider.h"
 #include "agnc/query.h"
+#include "agnc/repl_jobs.h"
+#include "agnc/cost.h"
 #include "agnc/session.h"
 #include "agnc/hooks.h"
 #include "agnc/skills.h"
@@ -43,18 +45,34 @@ static volatile int g_repl_in_request = 0;
 #ifdef _WIN32
 static BOOL WINAPI agnc_repl_ctrl_handler(DWORD event_type)
 {
-    if (event_type == CTRL_C_EVENT && g_repl_in_request) {
-        g_repl_cancel_flag = 1;
-        return TRUE;
+    volatile int *bg_cancel;
+
+    if (event_type == CTRL_C_EVENT) {
+        if (g_repl_in_request) {
+            g_repl_cancel_flag = 1;
+            return TRUE;
+        }
+        bg_cancel = agnc_repl_jobs_running_cancel_flag();
+        if (bg_cancel != NULL) {
+            *bg_cancel = 1;
+            return TRUE;
+        }
     }
     return FALSE;
 }
 #else
 static void agnc_repl_sigint_handler(int signum)
 {
+    volatile int *bg_cancel;
+
     (void)signum;
     if (g_repl_in_request) {
         g_repl_cancel_flag = 1;
+        return;
+    }
+    bg_cancel = agnc_repl_jobs_running_cancel_flag();
+    if (bg_cancel != NULL) {
+        *bg_cancel = 1;
     }
 }
 #endif
@@ -69,6 +87,26 @@ static void agnc_repl_install_cancel_handler(void)
     action.sa_handler = agnc_repl_sigint_handler;
     sigaction(SIGINT, &action, NULL);
 #endif
+}
+
+static int agnc_repl_bg_idle_poll(void)
+{
+    return agnc_repl_jobs_poll();
+}
+
+static void agnc_repl_bg_idle_perm_handle(void)
+{
+    agnc_repl_jobs_handle_pending_permission();
+}
+
+static int agnc_repl_bg_idle_perm_needed(void)
+{
+    return agnc_repl_jobs_has_pending_permission();
+}
+
+static int agnc_repl_bg_idle_needed(void)
+{
+    return agnc_repl_jobs_wants_idle_poll();
 }
 
 static char *agnc_strdup_local(const char *value)
@@ -125,6 +163,9 @@ static void agnc_repl_print_help(void)
     printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
     printf("  /hooks             Daftar hook per event (config hooks.*)\n");
     printf("  /usage             Token usage sesi + turn terakhir\n");
+    printf("  /cost              Estimasi biaya USD sesi (heuristik)\n");
+    printf("  /bg <prompt>       Jalankan prompt di background (antre hingga %d; sesi bg-N)\n", AGNC_REPL_JOB_QUEUE_MAX);
+    printf("  /jobs              Status job background; /jobs cancel | clear\n");
     printf("  /exit, /quit       Keluar\n");
     printf("\nWorkspace dan config agnc:\n");
     printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
@@ -623,6 +664,8 @@ static int agnc_repl_handle_slash(
         if (*session_path != NULL) {
             (void)agnc_session_clear_messages(*session_path, config);
             agnc_opencode_clear_session_link(*session_path);
+            (void)agnc_session_usage_reset(*session_path);
+            (void)agnc_session_cost_reset(*session_path);
         }
         if (session_usage != NULL) {
             agnc_session_usage_init(session_usage);
@@ -936,6 +979,69 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/cost", 5) == 0) {
+        double total_usd = 0.0;
+        char *formatted = NULL;
+
+        if (*session_path != NULL) {
+            (void)agnc_session_cost_load(*session_path, &total_usd);
+        }
+        formatted = agnc_cost_format_usd(total_usd);
+        printf("Estimasi biaya sesi \"%s\": %s\n", *active_session_name != NULL ? *active_session_name : "?", formatted != NULL ? formatted : "?");
+        free(formatted);
+        return 1;
+    }
+
+    if (strncmp(line, "/jobs", 5) == 0) {
+        arg = line + 5;
+        while (*arg == ' ') {
+            arg++;
+        }
+        if (strcmp(arg, "cancel") == 0) {
+            if (agnc_repl_job_cancel_running()) {
+                agnc_console_print_chat_system("background job dibatalkan");
+            } else {
+                agnc_console_print_chat_system("tidak ada job background aktif");
+            }
+        } else if (strcmp(arg, "clear") == 0) {
+            int cleared = agnc_repl_jobs_clear_queue();
+
+            if (cleared > 0) {
+                char detail[96];
+                snprintf(detail, sizeof(detail), "antrean background dikosongkan (%d job)", cleared);
+                agnc_console_print_chat_system(detail);
+            } else {
+                agnc_console_print_chat_system("antrean background sudah kosong");
+            }
+        } else {
+            agnc_repl_jobs_print_status();
+        }
+        return 1;
+    }
+
+    if (strncmp(line, "/bg", 3) == 0) {
+        arg = line + 3;
+        while (*arg == ' ') {
+            arg++;
+        }
+        if (*arg == '\0') {
+            agnc_console_print_chat_system("format: /bg <prompt>");
+            return 1;
+        }
+        agnc_console_print_chat_user(line);
+        if (agnc_repl_job_submit(arg, config, 0, NULL, NULL) != 0) {
+            char detail[160];
+
+            snprintf(
+                detail,
+                sizeof(detail),
+                "background job gagal — antrean penuh (maks %d) atau error internal",
+                AGNC_REPL_JOB_QUEUE_MAX);
+            agnc_console_print_chat_system(detail);
+        }
+        return 1;
+    }
+
     if (strncmp(line, "/usage", 6) == 0) {
         agnc_repl_print_usage_detail(
             *active_session_name,
@@ -1041,6 +1147,12 @@ int agnc_cli_run_interactive(void)
     }
 
     agnc_repl_install_cancel_handler();
+    agnc_repl_jobs_init();
+    agnc_repl_line_set_idle(
+        agnc_repl_bg_idle_needed,
+        agnc_repl_bg_idle_poll,
+        agnc_repl_bg_idle_perm_needed,
+        agnc_repl_bg_idle_perm_handle);
     printf(">\n");
     fflush(stdout);
 
@@ -1056,12 +1168,38 @@ int agnc_cli_run_interactive(void)
     options.session_sqlite_path = session_path;
 
     for (;;) {
+        if (agnc_repl_jobs_poll()) {
+            printf(">\n");
+            fflush(stdout);
+        }
+
         if (!agnc_repl_read_line(line, sizeof(line))) {
             break;
         }
 
+        if (agnc_repl_jobs_poll()) {
+            printf(">\n");
+            fflush(stdout);
+        }
+
         agnc_repl_trim(line);
         if (line[0] == '\0') {
+            continue;
+        }
+
+        if (line[0] == '&') {
+            const char *bg_prompt = line + 1;
+
+            while (*bg_prompt == ' ') {
+                bg_prompt++;
+            }
+            if (*bg_prompt != '\0') {
+                agnc_console_clear_input_line();
+                agnc_console_print_chat_user(line);
+                (void)agnc_repl_job_submit(bg_prompt, &config, 0, NULL, NULL);
+            }
+            printf(">\n");
+            fflush(stdout);
             continue;
         }
 
@@ -1133,6 +1271,7 @@ int agnc_cli_run_interactive(void)
     free(session_path);
     free(active_session_name);
     agnc_mcp_session_free(&mcp_session);
+    agnc_repl_jobs_shutdown();
     agnc_conversation_clear(&conversation);
     agnc_config_free(&config);
     return exit_code;

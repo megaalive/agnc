@@ -32,6 +32,59 @@ static void agnc_permission_session_grant(unsigned flag)
     g_perm_session_granted |= flag;
 }
 
+static agnc_permission_background_ask_fn g_background_ask = NULL;
+static void *g_background_ask_ctx = NULL;
+
+void agnc_permission_set_background_ask(agnc_permission_background_ask_fn fn, void *ctx)
+{
+    g_background_ask = fn;
+    g_background_ask_ctx = ctx;
+}
+
+void agnc_permission_clear_background_ask(void)
+{
+    g_background_ask = NULL;
+    g_background_ask_ctx = NULL;
+}
+
+int agnc_permission_session_has_shell(void)
+{
+    return agnc_permission_session_has(AGNC_PERM_SESSION_SHELL);
+}
+
+static int agnc_permission_ask_non_interactive(
+    unsigned session_flag,
+    const char *kind,
+    const char *detail,
+    int *allowed)
+{
+    if (allowed == NULL) {
+        return 0;
+    }
+
+    if (agnc_permission_session_has(session_flag)) {
+        *allowed = 1;
+        return 1;
+    }
+
+    if (g_background_ask != NULL) {
+        *allowed = g_background_ask(kind, detail, g_background_ask_ctx) ? 1 : 0;
+        if (*allowed) {
+            agnc_permission_session_grant(session_flag);
+        }
+        return 1;
+    }
+
+    *allowed = 0;
+    fprintf(
+        stderr,
+        "agnc: [permission] denied (non-interactive): %s %s\n",
+        kind != NULL ? kind : "?",
+        detail != NULL ? detail : "(empty)");
+    fflush(stderr);
+    return 1;
+}
+
 static void agnc_permission_read_answer(unsigned session_flag, const char *session_label, int interactive_repl, int *allowed)
 {
     int was_granted;
@@ -69,12 +122,14 @@ agnc_status_t agnc_permission_ask_shell(const char *command, int *allowed, int i
 
     if (interactive_repl) {
         agnc_console_print_permission_prompt("izinkan shell?", command);
-    } else {
-        fprintf(stderr, "agnc: [permission] allow shell? [y/N] %s\n", command != NULL ? command : "(empty)");
-        fflush(stderr);
+        agnc_permission_read_answer(AGNC_PERM_SESSION_SHELL, "shell", interactive_repl, allowed);
+        return AGNC_STATUS_OK;
     }
 
-    agnc_permission_read_answer(AGNC_PERM_SESSION_SHELL, "shell", interactive_repl, allowed);
+    if (agnc_permission_ask_non_interactive(AGNC_PERM_SESSION_SHELL, "shell", command, allowed)) {
+        return AGNC_STATUS_OK;
+    }
+
     return AGNC_STATUS_OK;
 }
 
@@ -101,16 +156,14 @@ agnc_status_t agnc_permission_ask_file_write(
     if (interactive_repl) {
         snprintf(label, sizeof(label), "izinkan %s?", operation != NULL ? operation : "write");
         agnc_console_print_permission_prompt(label, path);
-    } else {
-        fprintf(
-            stderr,
-            "agnc: [permission] allow %s? [y/N] %s\n",
-            operation != NULL ? operation : "write",
-            path != NULL ? path : "(empty)");
-        fflush(stderr);
+        agnc_permission_read_answer(AGNC_PERM_SESSION_WRITE, "write/edit file", interactive_repl, allowed);
+        return AGNC_STATUS_OK;
     }
 
-    agnc_permission_read_answer(AGNC_PERM_SESSION_WRITE, "write/edit file", interactive_repl, allowed);
+    if (agnc_permission_ask_non_interactive(AGNC_PERM_SESSION_WRITE, operation != NULL ? operation : "write", path, allowed)) {
+        return AGNC_STATUS_OK;
+    }
+
     return AGNC_STATUS_OK;
 }
 
@@ -130,15 +183,14 @@ agnc_status_t agnc_permission_ask_mcp(const char *tool_name, int *allowed, int i
 
     if (interactive_repl) {
         agnc_console_print_permission_prompt("izinkan MCP tool?", tool_name);
-    } else {
-        fprintf(
-            stderr,
-            "agnc: [permission] allow MCP tool? [y/N] %s\n",
-            tool_name != NULL ? tool_name : "(empty)");
-        fflush(stderr);
+        agnc_permission_read_answer(AGNC_PERM_SESSION_MCP, "MCP tools", interactive_repl, allowed);
+        return AGNC_STATUS_OK;
     }
 
-    agnc_permission_read_answer(AGNC_PERM_SESSION_MCP, "MCP tools", interactive_repl, allowed);
+    if (agnc_permission_ask_non_interactive(AGNC_PERM_SESSION_MCP, "mcp", tool_name, allowed)) {
+        return AGNC_STATUS_OK;
+    }
+
     return AGNC_STATUS_OK;
 }
 
@@ -158,14 +210,13 @@ agnc_status_t agnc_permission_ask_web_fetch(const char *url, int *allowed, int i
 
     if (interactive_repl) {
         agnc_console_print_permission_prompt("izinkan web_fetch?", url);
-    } else {
-        fprintf(
-            stderr,
-            "agnc: [permission] allow web_fetch? [y/N] %s\n",
-            url != NULL ? url : "(empty)");
-        fflush(stderr);
+        agnc_permission_read_answer(AGNC_PERM_SESSION_WEB_FETCH, "web_fetch", interactive_repl, allowed);
+        return AGNC_STATUS_OK;
     }
 
-    agnc_permission_read_answer(AGNC_PERM_SESSION_WEB_FETCH, "web_fetch", interactive_repl, allowed);
+    if (agnc_permission_ask_non_interactive(AGNC_PERM_SESSION_WEB_FETCH, "web_fetch", url, allowed)) {
+        return AGNC_STATUS_OK;
+    }
+
     return AGNC_STATUS_OK;
 }

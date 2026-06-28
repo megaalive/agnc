@@ -5,7 +5,7 @@
 #include "agnc/provider.h"
 
 /* Registry gateway terurut; dipakai agnc_registry_find_gateway(). */
-#define AGNC_GATEWAY_COUNT 6
+#define AGNC_GATEWAY_COUNT 7
 
 const agnc_gateway_descriptor_t *agnc_registry_gateway_at(size_t index);
 

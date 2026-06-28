@@ -1,6 +1,36 @@
 /* File ini dihasilkan oleh scripts/generate_integrations.py — jangan edit manual. */
 #include "agnc_integrations_gen.h"
 
+static const agnc_model_descriptor_t agnc_models_anthropic[] = {
+    {"claude-sonnet-4-20250514", "claude-sonnet-4-20250514", 0, 1, 0},
+    {"claude-3-5-haiku-20241022", "claude-3-5-haiku-20241022", 0, 1, 0},
+};
+
+static const char *const agnc_env_anthropic[] = {
+    "ANTHROPIC_API_KEY",
+    "AGNC_API_KEY",
+    NULL
+};
+
+static const agnc_gateway_descriptor_t agnc_gateway_anthropic = {
+    "anthropic",
+    "Anthropic",
+    "https://api.anthropic.com",
+    "claude-sonnet-4-20250514",
+    AGNC_TRANSPORT_ANTHROPIC_NATIVE,
+    "x-api-key",
+    "raw",
+    "/v1/messages",
+    "/models",
+    0,
+    1,
+    1,
+    agnc_env_anthropic,
+    2,
+    agnc_models_anthropic,
+    2,
+};
+
 static const char *const agnc_env_custom_openai_compatible[] = {
     "AGNC_API_KEY",
     "OPENAI_API_KEY",
@@ -159,6 +189,7 @@ static const agnc_gateway_descriptor_t agnc_gateway_openrouter = {
 };
 
 static const agnc_gateway_descriptor_t *const agnc_gateway_table[] = {
+    &agnc_gateway_anthropic,
     &agnc_gateway_custom_openai_compatible,
     &agnc_gateway_gemini,
     &agnc_gateway_naraya,
