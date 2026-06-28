@@ -9,6 +9,7 @@
 #include "agnc/cli.h"
 #include "agnc/console.h"
 #include "agnc/oauth.h"
+#include "agnc/tool_path.h"
 #include "agnc/version.h"
 
 #include <stdio.h>
@@ -22,6 +23,7 @@ int main(int argc, char **argv)
 
     /* UTF-8 + ANSI sebelum output apa pun (termasuk --help). */
     agnc_console_init();
+    agnc_tool_path_session_begin();
 
     status = agnc_cli_parse(argc, argv, &options);
     if (status != AGNC_STATUS_OK) {

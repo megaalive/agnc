@@ -118,21 +118,14 @@ int agnc_cli_run_doctor(void)
     /* Tool workspace (read_file/grep/glob) — terpisah dari root MCP. */
     {
         char *workspace_root = NULL;
-        const char *workspace_env = getenv("AGNC_WORKSPACE");
+        char source[16];
 
         if (agnc_tool_path_workspace_root(&workspace_root) == AGNC_STATUS_OK && workspace_root != NULL) {
-            if (workspace_env != NULL && workspace_env[0] != '\0') {
-                char detail[512];
-                snprintf(
-                    detail,
-                    sizeof(detail),
-                    "%s (AGNC_WORKSPACE=%s)",
-                    workspace_root,
-                    workspace_env);
-                agnc_doctor_print_status("tool_workspace", "ok", detail);
-            } else {
-                agnc_doctor_print_status("tool_workspace", "ok", workspace_root);
-            }
+            char detail[640];
+
+            agnc_tool_path_workspace_source(source, sizeof(source));
+            snprintf(detail, sizeof(detail), "%s (source: %s)", workspace_root, source);
+            agnc_doctor_print_status("tool_workspace", "ok", detail);
             free(workspace_root);
         } else {
             agnc_doctor_print_status("tool_workspace", "error", "cannot resolve workspace root");

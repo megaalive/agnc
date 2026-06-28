@@ -32,6 +32,10 @@
 #include <string.h>
 
 #include <curl/curl.h>
+
+#ifndef _WIN32
+#include <strings.h>
+#endif
 #include <yyjson.h>
 
 #define AGNC_TOOL_RESULT_MAX 6000
@@ -240,21 +244,56 @@ static void agnc_query_truncate_tool_result(char **tool_result)
     memcpy(resized + AGNC_TOOL_RESULT_MAX, suffix, sizeof(suffix));
 }
 
+static int agnc_query_error_detail_is_vague(const char *detail)
+{
+    size_t length;
+
+    if (detail == NULL || detail[0] == '\0') {
+        return 1;
+    }
+
+    length = strlen(detail);
+    if (length <= 6) {
+#ifdef _MSC_VER
+        if (_stricmp(detail, "error") == 0) {
+            return 1;
+        }
+#else
+        if (strcasecmp(detail, "error") == 0) {
+            return 1;
+        }
+#endif
+    }
+
+    return length < 12;
+}
+
 static void agnc_query_report_repl_error(
     int chat_assistant_timestamp,
     agnc_status_t status,
     const char *detail)
 {
-    char line[512];
+    char line[640];
 
     if (!chat_assistant_timestamp) {
         return;
     }
 
-    if (detail != NULL && detail[0] != '\0') {
+    if (detail != NULL && detail[0] != '\0' && !agnc_query_error_detail_is_vague(detail)) {
         snprintf(line, sizeof(line), "%s", detail);
+    } else if (detail != NULL && detail[0] != '\0') {
+        snprintf(
+            line,
+            sizeof(line),
+            "query gagal (%s): %s — /verbose on untuk detail HTTP; coba /compact jika sesi besar",
+            agnc_status_to_string(status),
+            detail);
     } else {
-        snprintf(line, sizeof(line), "query gagal (%s)", agnc_status_to_string(status));
+        snprintf(
+            line,
+            sizeof(line),
+            "query gagal (%s) — /verbose on untuk detail HTTP; coba /compact jika sesi besar",
+            agnc_status_to_string(status));
     }
 
     agnc_console_print_chat_system(line);
@@ -1424,8 +1463,10 @@ static char *agnc_query_build_product_context(const char *workspace_root)
     char *sessions_dir = NULL;
     char *context = NULL;
     size_t length;
-    const char *workspace_env = getenv("AGNC_WORKSPACE");
+    char workspace_source[16];
     const char *workspace_label = workspace_root != NULL ? workspace_root : "(unknown)";
+
+    agnc_tool_path_workspace_source(workspace_source, sizeof(workspace_source));
 
     (void)agnc_path_default_config(&config_path);
     (void)agnc_session_default_dir(&sessions_dir);
@@ -1454,14 +1495,15 @@ static char *agnc_query_build_product_context(const char *workspace_root)
         "Host: agnc CLI on Windows (not Claude Desktop, Cursor, or VS Code as MCP host). "
         "Global config file: %s (outside repo workspace; read with read_file using this absolute path). "
         "Session storage: %s (SQLite per session; active pointer in active.txt). "
-        "Tool workspace (read_file/grep/glob/write): %s%s. "
-        "To change tool workspace: set env AGNC_WORKSPACE to a directory and restart agnc, or run agnc from another repo root. "
+        "Tool workspace (read_file/grep/glob/write): %s (%s). "
+        "To change tool workspace in REPL: /workspace <path> or /workspace reset; saved per session. "
+        "Env AGNC_WORKSPACE applies when no /workspace override. "
         "MCP filesystem roots are separate: edit mcp.servers[].args in global config, then /mcp reconnect in REPL. "
         "Do not invent claude_desktop_config.json or host-app MCP paths unless the user names that product.",
         config_path != NULL ? config_path : "~/.agnc.json",
         sessions_dir != NULL ? sessions_dir : "~/.agnc/sessions",
         workspace_label,
-        workspace_env != NULL && workspace_env[0] != '\0' ? " (AGNC_WORKSPACE override active)" : "");
+        workspace_source);
 
     free(config_path);
     free(sessions_dir);
@@ -1869,6 +1911,10 @@ agnc_status_t agnc_query_run(
     }
 
     status = AGNC_STATUS_PROVIDER_ERROR;
+    if (error_message == NULL) {
+        error_message = agnc_strdup_local(
+            "max tool iterations reached; pecah prompt atau /compact lalu coba lagi");
+    }
     fprintf(stderr, "agnc: max tool iterations reached\n");
 
 cleanup:

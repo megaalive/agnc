@@ -83,7 +83,11 @@
     "tui": false
   },
   "sessions": {
-    "restore_routing": false
+    "restore_routing": false,
+    "auto_compact": true,
+    "auto_compact_threshold": 32,
+    "auto_compact_keep": 24,
+    "auto_compact_threshold_tokens": 100000
   },
   "paths": {
     "sessions_dir": "~/.agnc/sessions",

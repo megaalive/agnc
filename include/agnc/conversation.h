@@ -24,6 +24,10 @@
 /* Default /compact: keep N pesan tail (+ system). */
 #define AGNC_CONVERSATION_COMPACT_KEEP 24
 
+/* Auto-compact REPL saat pesan non-system di RAM atau token sesi melewati batas. */
+#define AGNC_SESSION_AUTO_COMPACT_THRESHOLD_MESSAGES 32
+#define AGNC_SESSION_AUTO_COMPACT_THRESHOLD_TOKENS 100000L
+
 typedef struct {
     char *role;
     char *content;
@@ -98,10 +102,13 @@ agnc_status_t agnc_conversation_ensure_system(agnc_conversation_t *conversation,
 agnc_status_t agnc_conversation_trim_memory(agnc_conversation_t *conversation);
 
 /*
- * Ringkas: pertahankan system + N pesan tail di RAM.
- * Pemanggil wajib memanggil agnc_session_compact_storage untuk selaraskan DB.
+ * Ringkas RAM: pertahankan system + N pesan tail.
+ * Pesan yang dibuang tetap di SQLite; memory_skipped naik untuk window LLM.
  */
 agnc_status_t agnc_conversation_compact(agnc_conversation_t *conversation, size_t keep_tail_messages);
+
+/* Jumlah pesan non-system yang ada di RAM. */
+size_t agnc_conversation_non_system_count(const agnc_conversation_t *conversation);
 
 /* Indeks awal items[] untuk window LLM (system + tail). */
 size_t agnc_conversation_llm_start_index(const agnc_conversation_t *conversation);

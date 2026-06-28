@@ -35,6 +35,10 @@ typedef struct {
     int verbose;
     int tui_enabled;
     int sessions_restore_routing;
+    int sessions_auto_compact;
+    int sessions_auto_compact_threshold;
+    int sessions_auto_compact_keep;
+    long sessions_auto_compact_threshold_tokens;
     int enable_tools;
     int tool_read_file;
     int tool_shell;

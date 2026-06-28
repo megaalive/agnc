@@ -381,6 +381,26 @@ agnc_status_t agnc_conversation_compact(agnc_conversation_t *conversation, size_
     return AGNC_STATUS_OK;
 }
 
+size_t agnc_conversation_non_system_count(const agnc_conversation_t *conversation)
+{
+    size_t count = 0;
+    size_t index;
+
+    if (conversation == NULL) {
+        return 0;
+    }
+
+    for (index = 0; index < conversation->count; index++) {
+        const char *role = conversation->items[index].role;
+
+        if (role != NULL && strcmp(role, "system") != 0) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 size_t agnc_conversation_llm_start_index(const agnc_conversation_t *conversation)
 {
     size_t tail_budget = AGNC_CONVERSATION_LLM_WINDOW;

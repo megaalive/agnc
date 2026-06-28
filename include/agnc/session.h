@@ -80,12 +80,29 @@ agnc_status_t agnc_session_save(
 /* Hapus semua pesan di DB sesi (mis. /clear). */
 agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t *config);
 
-/* Ringkas DB + meta summary; muat ulang tail ke conversation. */
-agnc_status_t agnc_session_compact_storage(
+/* Ringkas RAM saja; riwayat di SQLite tidak dihapus. path diabaikan. */
+agnc_status_t agnc_session_compact_history(
     const char *path,
     agnc_conversation_t *conversation,
     const agnc_config_t *config,
     size_t keep_tail_messages);
+
+/* 1 jika config + ukuran sesi memenuhi syarat auto-compact. */
+int agnc_session_should_auto_compact(
+    const agnc_config_t *config,
+    const agnc_conversation_t *conversation,
+    const agnc_session_usage_t *usage);
+
+/*
+ * Jalankan compact bila perlu; set *did_compact=1 jika riwayat diringkas.
+ * path boleh NULL (hanya RAM).
+ */
+agnc_status_t agnc_session_auto_compact_if_needed(
+    const char *path,
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config,
+    const agnc_session_usage_t *usage,
+    int *did_compact);
 
 void agnc_session_usage_init(agnc_session_usage_t *usage);
 

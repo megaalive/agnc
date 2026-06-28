@@ -26,6 +26,24 @@ agnc_status_t agnc_tool_path_validate_workspace(const char *absolute_path);
 /* Return repo/workspace root (heap-owned). */
 agnc_status_t agnc_tool_path_workspace_root(char **root);
 
+/*
+ * Snapshot cwd saat REPL/sesi dimulai; dipakai /workspace reset.
+ * Panggil sekali saat startup agnc.
+ */
+void agnc_tool_path_session_begin(void);
+
+/* Set workspace runtime (absolut/canonical); chdir ke folder tersebut. */
+agnc_status_t agnc_tool_path_set_workspace(const char *path);
+
+/* Hapus override runtime; chdir kembali ke cwd startup. */
+agnc_status_t agnc_tool_path_reset_workspace(void);
+
+/*
+ * Sumber workspace aktif: "runtime", "env", atau "auto".
+ * out must be at least 16 bytes.
+ */
+void agnc_tool_path_workspace_source(char *out, size_t out_cap);
+
 /* Resolve path pencarian grep/glob; default "." -> src jika ada, else repo root. */
 agnc_status_t agnc_tool_path_resolve_search(const char *path, char **resolved);
 

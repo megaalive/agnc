@@ -5,6 +5,7 @@
  */
 
 #include "agnc/config.h"
+#include "agnc/conversation.h"
 #include "agnc/atomic_write.h"
 #include "agnc/oauth.h"
 #include "agnc/path.h"
@@ -1059,6 +1060,10 @@ void agnc_config_init(agnc_config_t *config)
     config->hooks_enabled = 0;
     config->tui_enabled = 0;
     config->sessions_restore_routing = 0;
+    config->sessions_auto_compact = 1;
+    config->sessions_auto_compact_threshold = AGNC_SESSION_AUTO_COMPACT_THRESHOLD_MESSAGES;
+    config->sessions_auto_compact_keep = AGNC_CONVERSATION_COMPACT_KEEP;
+    config->sessions_auto_compact_threshold_tokens = AGNC_SESSION_AUTO_COMPACT_THRESHOLD_TOKENS;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;
@@ -1139,7 +1144,11 @@ static const char AGNC_CONFIG_BOOTSTRAP_JSON[] =
     "    \"tui\": false\n"
     "  },\n"
     "  \"sessions\": {\n"
-    "    \"restore_routing\": false\n"
+    "    \"restore_routing\": false,\n"
+    "    \"auto_compact\": true,\n"
+    "    \"auto_compact_threshold\": 32,\n"
+    "    \"auto_compact_keep\": 24,\n"
+    "    \"auto_compact_threshold_tokens\": 100000\n"
     "  },\n"
     "  \"paths\": {\n"
     "    \"sessions_dir\": \"~/.agnc/sessions\",\n"
@@ -1291,6 +1300,32 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
             value = yyjson_obj_get(sessions, "restore_routing");
             if (value != NULL && yyjson_is_bool(value)) {
                 config->sessions_restore_routing = yyjson_get_bool(value) ? 1 : 0;
+            }
+
+            value = yyjson_obj_get(sessions, "auto_compact");
+            if (value != NULL && yyjson_is_bool(value)) {
+                config->sessions_auto_compact = yyjson_get_bool(value) ? 1 : 0;
+            }
+
+            value = yyjson_obj_get(sessions, "auto_compact_threshold");
+            if (value != NULL && yyjson_is_int(value)) {
+                int threshold = (int)yyjson_get_int(value);
+                if (threshold > 0) {
+                    config->sessions_auto_compact_threshold = threshold;
+                }
+            }
+
+            value = yyjson_obj_get(sessions, "auto_compact_keep");
+            if (value != NULL && yyjson_is_int(value)) {
+                int keep = (int)yyjson_get_int(value);
+                if (keep > 0) {
+                    config->sessions_auto_compact_keep = keep;
+                }
+            }
+
+            value = yyjson_obj_get(sessions, "auto_compact_threshold_tokens");
+            if (value != NULL && yyjson_is_int(value)) {
+                config->sessions_auto_compact_threshold_tokens = (long)yyjson_get_int(value);
             }
         }
     }

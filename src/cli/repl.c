@@ -23,6 +23,7 @@
 #include "agnc/skills.h"
 #include "agnc/tool.h"
 #include "agnc/tool_cache.h"
+#include "agnc/tool_path.h"
 
 #include "agnc_integrations_gen.h"
 
@@ -304,7 +305,7 @@ static void agnc_repl_print_help(void)
     agnc_repl_help_cmd("/doctor", "Health check config, tool, MCP, OAuth");
 
     agnc_repl_help_section("Chat & riwayat");
-    agnc_repl_help_cmd("/clear", "Hapus riwayat percakapan sesi aktif");
+    agnc_repl_help_cmd("/clear", "Hapus riwayat sesi aktif (RAM + SQLite; konfirmasi [y/N])");
     agnc_repl_help_cmd("/cls", "Bersihkan layar terminal (riwayat chat tetap)");
     {
         char compact_desc[96];
@@ -312,10 +313,13 @@ static void agnc_repl_print_help(void)
         snprintf(
             compact_desc,
             sizeof(compact_desc),
-            "Ringkas riwayat di SQLite (default keep %d pesan)",
+            "Ringkas riwayat di RAM (default keep %d pesan; SQLite tetap)",
             AGNC_COMPACT_KEEP_TAIL);
         agnc_repl_help_cmd("/compact [n]", compact_desc);
     }
+    agnc_repl_help_note(
+        "Auto-compact: RAM diringkas sebelum prompt jika >=32 pesan di RAM "
+        "atau token sesi >100k (sessions.* di config)");
 
     agnc_repl_help_section("Model & provider");
     agnc_repl_help_cmd("/model [nama]", "Lihat atau ganti model aktif");
@@ -323,6 +327,8 @@ static void agnc_repl_print_help(void)
     agnc_repl_help_cmd("/provider [id]", "Lihat atau ganti provider (env AGNC_PROVIDER)");
 
     agnc_repl_help_section("Sesi");
+    agnc_repl_help_cmd("/workspace [path]", "Lihat atau ganti root tool (read_file/grep/shell)");
+    agnc_repl_help_cmd("/workspace reset", "Kembali ke auto-detect / AGNC_WORKSPACE");
     agnc_repl_help_cmd("/session, /sessions", "Daftar sesi tersimpan");
     agnc_repl_help_cmd("/session <nama>", "Pindah sesi (riwayat saja)");
     agnc_repl_help_cmd("/session <nama> --routing", "Pindah sesi + pulihkan provider/model terakhir");
@@ -362,15 +368,15 @@ static void agnc_repl_print_help(void)
     agnc_repl_help_note("agnc · pesan sistem / aktivitas tool (abu-abu)");
 
     agnc_repl_help_section("Workspace & config");
-    agnc_repl_help_note("Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE");
-    agnc_repl_help_note("Pindah workspace: set AGNC_WORKSPACE + restart, atau cd ke repo lain");
+    agnc_repl_help_note("Tool workspace = folder proyek aktif; MCP root terpisah (mcp.servers)");
     agnc_repl_help_note("Config global = ~/.agnc.json; sesi = ~/.agnc/sessions/*.sqlite");
     agnc_repl_help_note("Root MCP filesystem = mcp.servers[].args; setelah edit: /mcp reconnect");
 
     agnc_repl_help_section("Keyboard");
     agnc_repl_help_cmd("Ctrl+C (idle)", "Keluar REPL");
     agnc_repl_help_cmd("Ctrl+C (request/bg)", "Batalkan tanpa keluar");
-    agnc_repl_help_cmd("Ctrl+Enter", "Baris baru di prompt (multi-line)");
+    agnc_repl_help_cmd("Shift+Enter, Ctrl+Enter", "Baris baru di prompt (multi-line)");
+    agnc_repl_help_cmd("Enter", "Kirim pesan ke model");
     agnc_repl_help_cmd("↑ / ↓", "History perintah (32 baris)");
 
     agnc_console_repl_printf("\n");
@@ -595,6 +601,55 @@ static void agnc_repl_usage_reload(agnc_session_usage_t *session_usage, const ch
     }
 }
 
+static void agnc_repl_print_compact_result(size_t keep, agnc_status_t status, int auto_triggered)
+{
+    char detail[96];
+
+    if (status != AGNC_STATUS_OK) {
+        agnc_console_print_chat_system(auto_triggered ? "auto-compact gagal" : "compact gagal");
+        fprintf(stderr, "agnc: %s\n", agnc_status_to_string(status));
+        return;
+    }
+
+    if (auto_triggered) {
+        snprintf(detail, sizeof(detail), "auto-compact: riwayat diringkas (keep %zu pesan)", keep);
+    } else {
+        snprintf(detail, sizeof(detail), "riwayat diringkas (keep %zu pesan)", keep);
+    }
+    agnc_console_print_chat_system(detail);
+}
+
+static void agnc_repl_maybe_auto_compact(
+    agnc_config_t *config,
+    agnc_conversation_t *conversation,
+    const char *session_path,
+    agnc_session_usage_t *session_usage)
+{
+    int did_compact = 0;
+    size_t keep;
+    agnc_status_t status;
+
+    if (config == NULL || conversation == NULL) {
+        return;
+    }
+
+    status = agnc_session_auto_compact_if_needed(
+        session_path,
+        conversation,
+        config,
+        session_usage,
+        &did_compact);
+    if (!did_compact) {
+        return;
+    }
+
+    keep = (size_t)config->sessions_auto_compact_keep;
+    if (keep == 0) {
+        keep = AGNC_CONVERSATION_COMPACT_KEEP;
+    }
+    agnc_repl_print_compact_result(keep, status, 1);
+}
+
 static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
 {
     agnc_config_t fresh;
@@ -731,6 +786,42 @@ static void agnc_repl_notify_memory_window(agnc_conversation_t *conversation)
     }
 }
 
+static void agnc_repl_print_workspace(void)
+{
+    char *root = NULL;
+    char source[16];
+    char detail[640];
+
+    if (agnc_tool_path_workspace_root(&root) != AGNC_STATUS_OK || root == NULL) {
+        agnc_console_print_chat_system("workspace: tidak dapat di-resolve");
+        return;
+    }
+
+    agnc_tool_path_workspace_source(source, sizeof(source));
+    snprintf(detail, sizeof(detail), "workspace (%s): %s", source, root);
+    agnc_console_print_chat_system(detail);
+    free(root);
+}
+
+static void agnc_repl_restore_session_workspace(const char *session_path)
+{
+    char *saved = NULL;
+
+    (void)agnc_tool_path_reset_workspace();
+    if (session_path == NULL) {
+        return;
+    }
+
+    if (agnc_session_meta_get(session_path, "tool_workspace", &saved) == AGNC_STATUS_OK && saved != NULL &&
+        saved[0] != '\0') {
+        if (agnc_tool_path_set_workspace(saved) != AGNC_STATUS_OK) {
+            (void)agnc_session_meta_delete(session_path, "tool_workspace");
+        }
+    }
+
+    free(saved);
+}
+
 static void agnc_repl_print_sessions(const char *active_name)
 {
     char *dir = NULL;
@@ -824,6 +915,7 @@ static agnc_status_t agnc_repl_switch_session(
     }
 
     agnc_repl_usage_reload(session_usage, new_path);
+    agnc_repl_restore_session_workspace(new_path);
 
     if (!force_empty && agnc_path_exists(new_path) && !restore_routing) {
         char *hint_provider = NULL;
@@ -1023,6 +1115,29 @@ static int agnc_repl_handle_slash(
     }
 
     if (agnc_repl_slash_matches(line, "/clear")) {
+        int confirmed = 0;
+        const char *yes_flag = line + 6;
+
+        while (*yes_flag == ' ') {
+            yes_flag++;
+        }
+        if (strcmp(yes_flag, "--yes") == 0 || strcmp(yes_flag, "-y") == 0) {
+            confirmed = 1;
+        } else if (*yes_flag != '\0') {
+            agnc_console_print_chat_system("format: /clear  atau  /clear --yes");
+            return 1;
+        } else {
+            agnc_console_print_permission_prompt(
+                "hapus semua riwayat sesi aktif?",
+                "RAM dan SQLite — tidak bisa dibatalkan");
+            agnc_console_read_yes_no(&confirmed);
+        }
+
+        if (!confirmed) {
+            agnc_console_print_chat_system("clear dibatalkan");
+            return 1;
+        }
+
         agnc_conversation_clear(conversation);
         if (*session_path != NULL) {
             (void)agnc_session_clear_messages(*session_path, config);
@@ -1061,25 +1176,8 @@ static int agnc_repl_handle_slash(
             }
         }
 
-        status = agnc_conversation_compact(conversation, keep);
-        if (status != AGNC_STATUS_OK) {
-            agnc_console_print_chat_system("compact gagal");
-            fprintf(stderr, "agnc: %s\n", agnc_status_to_string(status));
-        } else if (*session_path != NULL) {
-            status = agnc_session_compact_storage(*session_path, conversation, config, keep);
-            if (status != AGNC_STATUS_OK) {
-                agnc_console_print_chat_system("compact storage gagal");
-                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(status));
-            } else {
-                char detail[64];
-                snprintf(detail, sizeof(detail), "riwayat diringkas (keep %zu pesan)", keep);
-                agnc_console_print_chat_system(detail);
-            }
-        } else {
-            char detail[64];
-            snprintf(detail, sizeof(detail), "riwayat diringkas (keep %zu pesan)", keep);
-            agnc_console_print_chat_system(detail);
-        }
+        status = agnc_session_compact_history(*session_path, conversation, config, keep);
+        agnc_repl_print_compact_result(keep, status, 0);
         return 1;
     }
 
@@ -1347,6 +1445,53 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (agnc_repl_slash_matches(line, "/workspace")) {
+        char *root = NULL;
+        agnc_status_t ws_status;
+
+        arg = line + 10;
+        while (*arg == ' ') {
+            arg++;
+        }
+
+        if (*arg == '\0') {
+            agnc_repl_print_workspace();
+            return 1;
+        }
+
+        if (strcmp(arg, "reset") == 0) {
+            ws_status = agnc_tool_path_reset_workspace();
+            if (*session_path != NULL) {
+                (void)agnc_session_meta_delete(*session_path, "tool_workspace");
+            }
+            agnc_find_symbol_index_invalidate();
+            agnc_skills_invalidate();
+            if (ws_status != AGNC_STATUS_OK) {
+                agnc_console_print_chat_system("workspace reset gagal");
+                fprintf(stderr, "agnc: %s\n", agnc_status_to_string(ws_status));
+            } else {
+                agnc_repl_print_workspace();
+            }
+            return 1;
+        }
+
+        ws_status = agnc_tool_path_set_workspace(arg);
+        if (ws_status != AGNC_STATUS_OK) {
+            agnc_console_print_chat_system("workspace gagal — pastikan folder ada");
+            fprintf(stderr, "agnc: %s\n", agnc_status_to_string(ws_status));
+            return 1;
+        }
+
+        if (agnc_tool_path_workspace_root(&root) == AGNC_STATUS_OK && root != NULL && *session_path != NULL) {
+            (void)agnc_session_meta_set(*session_path, "tool_workspace", root);
+        }
+        free(root);
+        agnc_find_symbol_index_invalidate();
+        agnc_skills_invalidate();
+        agnc_repl_print_workspace();
+        return 1;
+    }
+
     if (agnc_repl_slash_matches(line, "/skills")) {
         arg = line + 7;
         while (*arg == ' ') {
@@ -1562,6 +1707,7 @@ int agnc_cli_run_interactive(void)
     int exit_code = 0;
 
     agnc_config_init(&config);
+    agnc_tool_path_session_begin();
     status = agnc_config_load(NULL, &config);
     if (status != AGNC_STATUS_OK) {
         fprintf(stderr, "agnc: gagal memuat config (~/.agnc.json): %s\n", agnc_status_to_string(status));
@@ -1608,6 +1754,7 @@ int agnc_cli_run_interactive(void)
             }
             agnc_repl_notify_memory_window(&conversation);
         }
+        agnc_repl_restore_session_workspace(session_path);
     }
 
     agnc_session_usage_init(&session_usage);
@@ -1722,6 +1869,8 @@ int agnc_cli_run_interactive(void)
 
         agnc_console_clear_input_line();
         agnc_console_print_chat_user(line);
+
+        agnc_repl_maybe_auto_compact(&config, &conversation, session_path, &session_usage);
 
         g_repl_cancel_flag = 0;
         g_repl_in_request = 1;

@@ -17,13 +17,19 @@
 #include <direct.h>
 #include <windows.h>
 #define getcwd _getcwd
+#define chdir _chdir
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 #else
 #include <limits.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
+
+static char *g_runtime_workspace = NULL;
+static char g_startup_cwd[PATH_MAX];
+static int g_startup_cwd_saved = 0;
 
 static char *agnc_strdup_local(const char *value)
 {
@@ -246,11 +252,147 @@ static char *agnc_tool_path_find_repo_root(const char *start_dir)
     return NULL;
 }
 
+static int agnc_tool_path_is_directory(const char *path)
+{
+#ifdef _WIN32
+    DWORD attributes;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    attributes = GetFileAttributesA(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat info;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
+void agnc_tool_path_session_begin(void)
+{
+    const char *env_workspace;
+
+    if (g_startup_cwd_saved) {
+        return;
+    }
+
+    if (getcwd(g_startup_cwd, sizeof(g_startup_cwd)) != NULL) {
+        g_startup_cwd_saved = 1;
+    }
+
+    env_workspace = getenv("AGNC_WORKSPACE");
+    if (env_workspace != NULL && env_workspace[0] != '\0') {
+        char *expanded = NULL;
+        char *absolute = NULL;
+        agnc_status_t status;
+
+        if (strchr(env_workspace, '~') != NULL) {
+            status = agnc_path_expand_user(env_workspace, &expanded);
+            if (status == AGNC_STATUS_OK) {
+                status = agnc_tool_path_to_absolute(expanded, &absolute);
+            }
+            free(expanded);
+        } else {
+            status = agnc_tool_path_to_absolute(env_workspace, &absolute);
+        }
+
+        if (status == AGNC_STATUS_OK && absolute != NULL && agnc_tool_path_is_directory(absolute)) {
+            (void)chdir(absolute);
+        }
+        free(absolute);
+    }
+}
+
+agnc_status_t agnc_tool_path_set_workspace(const char *path)
+{
+    char *expanded = NULL;
+    char *absolute = NULL;
+    agnc_status_t status;
+
+    if (path == NULL || path[0] == '\0') {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (strchr(path, '~') != NULL) {
+        status = agnc_path_expand_user(path, &expanded);
+        if (status != AGNC_STATUS_OK) {
+            free(expanded);
+            return status;
+        }
+        status = agnc_tool_path_to_absolute(expanded, &absolute);
+        free(expanded);
+    } else {
+        status = agnc_tool_path_to_absolute(path, &absolute);
+    }
+
+    if (status != AGNC_STATUS_OK || absolute == NULL) {
+        free(absolute);
+        return status != AGNC_STATUS_OK ? status : AGNC_STATUS_IO_ERROR;
+    }
+
+    if (!agnc_tool_path_is_directory(absolute)) {
+        free(absolute);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (chdir(absolute) != 0) {
+        free(absolute);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    free(g_runtime_workspace);
+    g_runtime_workspace = absolute;
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_tool_path_reset_workspace(void)
+{
+    free(g_runtime_workspace);
+    g_runtime_workspace = NULL;
+
+    if (g_startup_cwd_saved && chdir(g_startup_cwd) != 0) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    return AGNC_STATUS_OK;
+}
+
+void agnc_tool_path_workspace_source(char *out, size_t out_cap)
+{
+    const char *label = "auto";
+
+    if (out == NULL || out_cap == 0) {
+        return;
+    }
+
+    if (g_runtime_workspace != NULL && g_runtime_workspace[0] != '\0') {
+        label = "runtime";
+    } else {
+        const char *env_workspace = getenv("AGNC_WORKSPACE");
+
+        if (env_workspace != NULL && env_workspace[0] != '\0') {
+            label = "env";
+        }
+    }
+
+    snprintf(out, out_cap, "%s", label);
+}
+
 static char *agnc_tool_path_get_workspace(void)
 {
     const char *env_workspace;
     char buffer[PATH_MAX];
     char *repo_root;
+
+    if (g_runtime_workspace != NULL && g_runtime_workspace[0] != '\0') {
+        return agnc_strdup_local(g_runtime_workspace);
+    }
 
     env_workspace = getenv("AGNC_WORKSPACE");
     if (env_workspace != NULL && env_workspace[0] != '\0') {

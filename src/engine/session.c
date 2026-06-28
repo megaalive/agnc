@@ -2076,103 +2076,83 @@ agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t 
     return AGNC_STATUS_OK;
 }
 
-agnc_status_t agnc_session_compact_storage(
+agnc_status_t agnc_session_compact_history(
     const char *path,
     agnc_conversation_t *conversation,
     const agnc_config_t *config,
     size_t keep_tail_messages)
 {
-    sqlite3 *db = NULL;
-    char summary[160];
-    char *provider_id = NULL;
-    char *model = NULL;
-    agnc_status_t status;
-    int rc;
+    (void)path;
+    (void)config;
 
-    if (path == NULL || conversation == NULL) {
+    if (conversation == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
     }
 
-    if (!agnc_path_exists(path)) {
-        return agnc_session_sync(path, conversation, config);
+    return agnc_conversation_compact(conversation, keep_tail_messages);
+}
+
+int agnc_session_should_auto_compact(
+    const agnc_config_t *config,
+    const agnc_conversation_t *conversation,
+    const agnc_session_usage_t *usage)
+{
+    size_t ram_non_system;
+    size_t keep;
+
+    if (config == NULL || conversation == NULL || !config->sessions_auto_compact) {
+        return 0;
     }
 
-    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
-    if (rc != SQLITE_OK || db == NULL) {
-        if (db != NULL) {
-            sqlite3_close(db);
-        }
-        return AGNC_STATUS_IO_ERROR;
+    keep = (size_t)config->sessions_auto_compact_keep;
+    if (keep == 0) {
+        keep = AGNC_CONVERSATION_COMPACT_KEEP;
     }
 
-    status = agnc_session_sqlite_prepare(db);
-    if (status != AGNC_STATUS_OK) {
-        sqlite3_close(db);
-        return status;
+    ram_non_system = agnc_conversation_non_system_count(conversation);
+    if (config->sessions_auto_compact_threshold > 0 &&
+        ram_non_system >= (size_t)config->sessions_auto_compact_threshold &&
+        ram_non_system > keep) {
+        return 1;
     }
 
-    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
-        sqlite3_close(db);
-        return AGNC_STATUS_IO_ERROR;
+    if (config->sessions_auto_compact_threshold_tokens > 0 && usage != NULL &&
+        usage->total_tokens >= config->sessions_auto_compact_threshold_tokens &&
+        ram_non_system > keep) {
+        return 1;
     }
 
-    {
-        sqlite3_stmt *del_stmt = NULL;
-        size_t remaining = 0;
+    return 0;
+}
 
-        rc = sqlite3_prepare_v2(
-            db,
-            "DELETE FROM messages WHERE COALESCE(is_bg, 0) = 0 AND id NOT IN ("
-            "  SELECT id FROM messages WHERE COALESCE(is_bg, 0) = 0 ORDER BY id DESC LIMIT ?"
-            ")",
-            -1,
-            &del_stmt,
-            NULL);
-        if (rc != SQLITE_OK) {
-            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
-            sqlite3_close(db);
-            return AGNC_STATUS_IO_ERROR;
-        }
+agnc_status_t agnc_session_auto_compact_if_needed(
+    const char *path,
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config,
+    const agnc_session_usage_t *usage,
+    int *did_compact)
+{
+    size_t keep;
+    agnc_status_t status;
 
-        if (sqlite3_bind_int64(del_stmt, 1, (sqlite3_int64)keep_tail_messages) != SQLITE_OK ||
-            sqlite3_step(del_stmt) != SQLITE_DONE) {
-            sqlite3_finalize(del_stmt);
-            (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
-            sqlite3_close(db);
-            return AGNC_STATUS_IO_ERROR;
-        }
-        sqlite3_finalize(del_stmt);
-
-        if (agnc_session_sqlite_message_count_foreground(db, &remaining) == AGNC_STATUS_OK) {
-            snprintf(
-                summary,
-                sizeof(summary),
-                "Riwayat diringkas; %zu pesan terakhir dipertahankan di storage.",
-                remaining);
-        } else {
-            snprintf(summary, sizeof(summary), "Riwayat diringkas.");
-        }
-
-        free(conversation->history_summary);
-        conversation->history_summary = agnc_strdup_local(summary);
-        if (conversation->history_summary != NULL) {
-            (void)agnc_session_sqlite_meta_set(db, "history_summary", conversation->history_summary);
-        }
+    if (did_compact != NULL) {
+        *did_compact = 0;
     }
 
-    status = agnc_session_sqlite_update_meta(db, config, conversation);
-    if (status != AGNC_STATUS_OK ||
-        agnc_session_sqlite_exec_simple(db, "COMMIT") != AGNC_STATUS_OK) {
-        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
-        sqlite3_close(db);
-        return AGNC_STATUS_IO_ERROR;
+    if (!agnc_session_should_auto_compact(config, conversation, usage)) {
+        return AGNC_STATUS_OK;
     }
 
-    sqlite3_close(db);
+    keep = (size_t)config->sessions_auto_compact_keep;
+    if (keep == 0) {
+        keep = AGNC_CONVERSATION_COMPACT_KEEP;
+    }
 
-    status = agnc_session_load_sqlite_tail(path, conversation, &provider_id, &model, AGNC_CONVERSATION_MEMORY_LIMIT);
-    free(provider_id);
-    free(model);
+    status = agnc_session_compact_history(path, conversation, config, keep);
+    if (status == AGNC_STATUS_OK && did_compact != NULL) {
+        *did_compact = 1;
+    }
+
     return status;
 }
 

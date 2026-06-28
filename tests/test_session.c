@@ -269,6 +269,51 @@ static void test_conversation_compact(void **state)
     agnc_conversation_clear(&conversation);
 }
 
+static void test_session_auto_compact_trigger(void **state)
+{
+    agnc_config_t config;
+    agnc_conversation_t conversation;
+    agnc_session_usage_t usage;
+    size_t index;
+
+    (void)state;
+
+    agnc_config_init(&config);
+    agnc_conversation_init(&conversation);
+    agnc_session_usage_init(&usage);
+
+    for (index = 0; index < 31; index++) {
+        char buf[32];
+
+        snprintf(buf, sizeof(buf), "user-%zu", index);
+        assert_int_equal(agnc_conversation_push(&conversation, "user", buf, NULL, NULL, NULL), AGNC_STATUS_OK);
+    }
+    assert_false(agnc_session_should_auto_compact(&config, &conversation, &usage));
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "user-31", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_true(agnc_session_should_auto_compact(&config, &conversation, &usage));
+
+    agnc_conversation_clear(&conversation);
+    agnc_conversation_init(&conversation);
+    for (index = 0; index < 25; index++) {
+        char buf[32];
+
+        snprintf(buf, sizeof(buf), "tok-%zu", index);
+        assert_int_equal(agnc_conversation_push(&conversation, "user", buf, NULL, NULL, NULL), AGNC_STATUS_OK);
+    }
+    usage.total_tokens = 99999;
+    assert_false(agnc_session_should_auto_compact(&config, &conversation, &usage));
+
+    usage.total_tokens = 100000;
+    assert_true(agnc_session_should_auto_compact(&config, &conversation, &usage));
+
+    config.sessions_auto_compact = 0;
+    assert_false(agnc_session_should_auto_compact(&config, &conversation, &usage));
+
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+}
+
 static void test_session_validate_name(void **state)
 {
     (void)state;
@@ -627,6 +672,7 @@ int main(void)
         cmocka_unit_test(test_conversation_ensure_system_updates),
         cmocka_unit_test(test_conversation_trim_after_sync),
         cmocka_unit_test(test_conversation_compact),
+        cmocka_unit_test(test_session_auto_compact_trigger),
         cmocka_unit_test(test_session_validate_name),
         cmocka_unit_test(test_session_path_for_name),
         cmocka_unit_test(test_session_list_names),

@@ -452,6 +452,29 @@ static int agnc_repl_key_ctrl_pressed(const INPUT_RECORD *record)
     return (record->Event.KeyEvent.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
 }
 
+static int agnc_repl_key_shift_pressed(const INPUT_RECORD *record)
+{
+    return (record->Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) != 0;
+}
+
+static int agnc_repl_key_newline_requested(const INPUT_RECORD *record)
+{
+    WORD key = record->Event.KeyEvent.wVirtualKeyCode;
+    char ch = record->Event.KeyEvent.uChar.AsciiChar;
+    int ctrl = agnc_repl_key_ctrl_pressed(record);
+    int shift = agnc_repl_key_shift_pressed(record);
+
+    if (!ctrl && !shift) {
+        return 0;
+    }
+
+    if (key == VK_RETURN || ch == '\n' || ch == '\r') {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int agnc_repl_is_word_char(char ch)
 {
     return ch != '\0' && ch != ' ' && ch != '\t';
@@ -588,7 +611,7 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         }
 
         if (key == VK_RETURN) {
-            if (agnc_repl_key_ctrl_pressed(&record)) {
+            if (agnc_repl_key_newline_requested(&record)) {
                 agnc_repl_insert_text(&view, draft, &length, &cursor, capacity, "\n");
                 browsing = 0;
                 continue;

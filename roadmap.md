@@ -1445,11 +1445,14 @@ Nonaktifkan TUI: `"runtime": { "tui": false }` atau terminal non-VT (fallback RE
 
 Keputusan 6.23.5 (tanpa library) terbukti rapuh: `printf`/DECSTBM dan `WriteConsole`/line-edit memakai dua model kursor.
 
+**Blokir toolchain (2026-06):** notcurses **belum ada di vcpkg** untuk build MSVC/Visual Studio agnc saat ini. Upstream Windows membutuhkan **MSYS2 UCRT64 + mingw-w64**, bukan cl.exe. Spike 6.25.1 dijalankan sebagai build opsional terpisah (MSYS2) atau menunggu port vcpkg; REPL produksi tetap **klasik + `runtime.tui: false`**.
+
 | Langkah | Isi |
 | --- | --- |
-| **6.25.1** | Spike notcurses (vcpkg): layout chat + input + status satu plane |
+| **6.25.0** | Spike toolchain: MSYS2 `pacman -S mingw-w64-ucrt-x86_64-notcurses`, cmake find_package, catat DLL path |
+| **6.25.1** | Layout chat + input + status satu plane (spike MSYS2 atau Linux dulu) |
 | **6.25.2** | Backend `tui_notcurses.c`; pertahankan API `agnc_tui_*` |
-| **6.25.3** | Linux + Windows Terminal; fallback REPL lama jika init gagal |
+| **6.25.3** | Windows Terminal + WT; fallback REPL lama jika init gagal |
 | **6.25.4** | Hapus DECSTBM/scroll manual dari `tui.c` |
 
 **Bukan ncurses klasik** — [notcurses](https://github.com/dankamongmen/notcurses): Unicode, Windows Console/WT, lebih cocok dari ncurses+PDCurses.

@@ -161,11 +161,41 @@ static void test_operator_read_rejects_system_path(void **state)
 #endif
 }
 
+static void test_workspace_runtime_override(void **state)
+{
+    char *root = NULL;
+    char source[16];
+    char cwd[1024];
+
+    (void)state;
+
+    agnc_tool_path_session_begin();
+    assert_int_equal(agnc_tool_path_workspace_root(&root), AGNC_STATUS_OK);
+    assert_non_null(root);
+    free(root);
+    root = NULL;
+
+#ifdef _WIN32
+    assert_non_null(_getcwd(cwd, sizeof(cwd)));
+#else
+    assert_non_null(getcwd(cwd, sizeof(cwd)));
+#endif
+
+    assert_int_equal(agnc_tool_path_set_workspace(cwd), AGNC_STATUS_OK);
+    agnc_tool_path_workspace_source(source, sizeof(source));
+    assert_string_equal(source, "runtime");
+
+    assert_int_equal(agnc_tool_path_reset_workspace(), AGNC_STATUS_OK);
+    agnc_tool_path_workspace_source(source, sizeof(source));
+    assert_string_equal(source, "auto");
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_path_rejects_dotdot),
         cmocka_unit_test(test_path_validate_workspace),
+        cmocka_unit_test(test_workspace_runtime_override),
         cmocka_unit_test(test_write_and_edit_roundtrip),
         cmocka_unit_test(test_grep_finds_in_src),
         cmocka_unit_test(test_find_symbol_finds_query_run),
