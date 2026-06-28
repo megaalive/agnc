@@ -222,46 +222,158 @@ static void agnc_repl_refresh_tui_status(
     agnc_tui_update_status(&status);
 }
 
+#define AGNC_REPL_HELP_CMD_COL 30
+
+static void agnc_repl_help_section(const char *title)
+{
+    if (title == NULL || title[0] == '\0') {
+        return;
+    }
+
+    agnc_console_repl_printf("\n");
+    if (agnc_console_vt_enabled()) {
+        agnc_console_repl_printf(AGNC_ANSI_BOLD "%s" AGNC_ANSI_RESET "\n", title);
+    } else {
+        agnc_console_repl_printf("%s\n", title);
+    }
+}
+
+static void agnc_repl_help_cmd(const char *cmd, const char *desc)
+{
+    char line[384];
+    size_t cmd_len;
+    int pad;
+
+    if (cmd == NULL || desc == NULL) {
+        return;
+    }
+
+    cmd_len = strlen(cmd);
+    if (cmd_len >= AGNC_REPL_HELP_CMD_COL) {
+        if (agnc_console_vt_enabled()) {
+            snprintf(
+                line,
+                sizeof(line),
+                "  " AGNC_ANSI_CODE "%s" AGNC_ANSI_RESET "\n    %s\n",
+                cmd,
+                desc);
+        } else {
+            snprintf(line, sizeof(line), "  %s\n    %s\n", cmd, desc);
+        }
+        agnc_console_repl_printf("%s", line);
+        return;
+    }
+
+    pad = (int)(AGNC_REPL_HELP_CMD_COL - cmd_len);
+    if (agnc_console_vt_enabled()) {
+        snprintf(
+            line,
+            sizeof(line),
+            "  " AGNC_ANSI_CODE "%s" AGNC_ANSI_RESET "%*s%s\n",
+            cmd,
+            pad,
+            "",
+            desc);
+    } else {
+        snprintf(line, sizeof(line), "  %s%*s%s\n", cmd, pad, "", desc);
+    }
+    agnc_console_repl_printf("%s", line);
+}
+
+static void agnc_repl_help_note(const char *text)
+{
+    if (text == NULL || text[0] == '\0') {
+        return;
+    }
+
+    if (agnc_console_vt_enabled()) {
+        agnc_console_repl_printf("  " AGNC_ANSI_DIM "%s" AGNC_ANSI_RESET "\n", text);
+    } else {
+        agnc_console_repl_printf("  %s\n", text);
+    }
+}
+
 static void agnc_repl_print_help(void)
 {
     agnc_console_begin_repl_output();
-    agnc_console_print_chat_system("mode interaktif");
-    agnc_console_repl_printf("Slash commands:\n");
-    agnc_console_repl_printf("  /help              Tampilkan bantuan ini\n");
-    agnc_console_repl_printf("  /clear             Hapus riwayat percakapan\n");
-    agnc_console_repl_printf("  /cls               Bersihkan layar terminal (bukan riwayat chat)\n");
-    agnc_console_repl_printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
-    agnc_console_repl_printf("  /models [provider] [filter]  Discovery model semua provider (filter substring)\n");
-    agnc_console_repl_printf("  /models --filter PATTERN     Filter nama model (case-insensitive)\n");
-    agnc_console_repl_printf("  /model [nama]      Model aktif; tanpa arg = ringkasan, dengan arg = ganti model\n");
-    agnc_console_repl_printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
-    agnc_console_repl_printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
-    agnc_console_repl_printf("  /session           Daftar sesi tersimpan (/sessions = alias)\n");
-    agnc_console_repl_printf("  /session <nama>    Pindah sesi (riwayat saja; tambah --routing untuk restore model)\n");
-    agnc_console_repl_printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
-    agnc_console_repl_printf("  /session delete <nama>  Hapus file sesi dari disk\n");
-    agnc_console_repl_printf("  /doctor            Jalankan health check\n");
-    agnc_console_repl_printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
-    agnc_console_repl_printf("  /hooks             Daftar hook per event (config hooks.*)\n");
-    agnc_console_repl_printf("  /usage             Token usage sesi + turn terakhir\n");
-    agnc_console_repl_printf("  /verbose [on|off|toggle]  Log diagnostik runtime.verbose (simpan ke config)\n");
-    agnc_console_repl_printf("  /cost              Estimasi biaya USD sesi (heuristik)\n");
-    agnc_console_repl_printf("  /bg <prompt>       Jalankan prompt di background (antre hingga %d; sesi aktif)\n", AGNC_REPL_JOB_QUEUE_MAX);
-    agnc_console_repl_printf("  & <prompt>         Alias /bg (prefix & di awal baris)\n");
-    agnc_console_repl_printf("  /jobs              Status job background; /jobs cancel | clear\n");
-    agnc_console_repl_printf("  /view [tools|jobs|off]  Panel TUI bawah (VT terminal; runtime.tui)\n");
-    agnc_console_repl_printf("  /exit, /quit       Keluar\n");
-    agnc_console_repl_printf("\nWorkspace dan config agnc:\n");
-    agnc_console_repl_printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
-    agnc_console_repl_printf("  Pindah workspace: set AGNC_WORKSPACE + restart agnc, atau cd ke repo lain lalu jalankan agnc.\n");
-    agnc_console_repl_printf("  Config global = ~/.agnc.json (di luar repo); sesi = ~/.agnc/sessions/*.sqlite.\n");
-    agnc_console_repl_printf("  Root MCP filesystem = mcp.servers[].args di config; setelah edit config: /mcp reconnect.\n");
-    agnc_console_repl_printf("\nCtrl+C           Keluar REPL (layar dibersihkan)\n");
-    agnc_console_repl_printf("Ctrl+C saat request / bg job  Membatalkan tanpa keluar\n");
-    agnc_console_repl_printf("Ctrl+Enter         Baris baru di prompt (multi-line)\n");
-    agnc_console_repl_printf("  user      HH:MM:SS + teks (hijau)\n");
-    agnc_console_repl_printf("  asisten   HH:MM:SS + jawaban (default; nama file abu-abu)\n");
-    agnc_console_repl_printf("  agnc      timestamp + pesan sistem (abu-abu)\n");
+    agnc_console_print_chat_system("bantuan REPL — ketik perintah slash di prompt >");
+
+    agnc_repl_help_section("Umum");
+    agnc_repl_help_cmd("/help", "Tampilkan bantuan ini");
+    agnc_repl_help_cmd("/exit, /quit", "Keluar dari REPL");
+    agnc_repl_help_cmd("/doctor", "Health check config, tool, MCP, OAuth");
+
+    agnc_repl_help_section("Chat & riwayat");
+    agnc_repl_help_cmd("/clear", "Hapus riwayat percakapan sesi aktif");
+    agnc_repl_help_cmd("/cls", "Bersihkan layar terminal (riwayat chat tetap)");
+    {
+        char compact_desc[96];
+
+        snprintf(
+            compact_desc,
+            sizeof(compact_desc),
+            "Ringkas riwayat di SQLite (default keep %d pesan)",
+            AGNC_COMPACT_KEEP_TAIL);
+        agnc_repl_help_cmd("/compact [n]", compact_desc);
+    }
+
+    agnc_repl_help_section("Model & provider");
+    agnc_repl_help_cmd("/model [nama]", "Lihat atau ganti model aktif");
+    agnc_repl_help_cmd("/models [provider] [filter]", "Discovery model (filter substring, case-insensitive)");
+    agnc_repl_help_cmd("/provider [id]", "Lihat atau ganti provider (env AGNC_PROVIDER)");
+
+    agnc_repl_help_section("Sesi");
+    agnc_repl_help_cmd("/session, /sessions", "Daftar sesi tersimpan");
+    agnc_repl_help_cmd("/session <nama>", "Pindah sesi (riwayat saja)");
+    agnc_repl_help_cmd("/session <nama> --routing", "Pindah sesi + pulihkan provider/model terakhir");
+    agnc_repl_help_cmd("/session new <nama>", "Buat sesi kosong baru");
+    agnc_repl_help_cmd("/session delete <nama>", "Hapus file sesi dari disk");
+
+    agnc_repl_help_section("Integrasi");
+    agnc_repl_help_cmd("/mcp [reconnect]", "Status server MCP; reconnect muat ulang koneksi");
+    agnc_repl_help_cmd("/skills [reload]", "Daftar skills aktif; reload dari disk");
+    agnc_repl_help_cmd("/hooks", "Daftar hook per event (config hooks.*)");
+
+    agnc_repl_help_section("Info & diagnostik");
+    agnc_repl_help_cmd("/usage", "Token usage sesi + turn terakhir");
+    agnc_repl_help_cmd("/cost", "Estimasi biaya USD sesi (heuristik)");
+    agnc_repl_help_cmd("/verbose [on|off|toggle]", "Log diagnostik ke stderr; simpan runtime.verbose");
+
+    agnc_repl_help_section("Background jobs");
+    {
+        char bg_desc[96];
+
+        snprintf(
+            bg_desc,
+            sizeof(bg_desc),
+            "Jalankan prompt di background (antre max %d, sesi aktif)",
+            AGNC_REPL_JOB_QUEUE_MAX);
+        agnc_repl_help_cmd("/bg <prompt>", bg_desc);
+    }
+    agnc_repl_help_cmd("& <prompt>", "Alias /bg (prefix & di awal baris)");
+    agnc_repl_help_cmd("/jobs", "Status job background");
+    agnc_repl_help_cmd("/jobs cancel", "Batalkan job yang sedang berjalan");
+    agnc_repl_help_cmd("/jobs clear", "Hapus job selesai dari antrean");
+
+    agnc_repl_help_section("Tampilan");
+    agnc_repl_help_cmd("/view [tools|jobs|off]", "Panel bawah TUI (butuh runtime.tui + VT terminal)");
+    agnc_repl_help_note("user · HH:MM:SS + teks (hijau)");
+    agnc_repl_help_note("asisten · HH:MM:SS + jawaban (nama file abu-abu)");
+    agnc_repl_help_note("agnc · pesan sistem / aktivitas tool (abu-abu)");
+
+    agnc_repl_help_section("Workspace & config");
+    agnc_repl_help_note("Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE");
+    agnc_repl_help_note("Pindah workspace: set AGNC_WORKSPACE + restart, atau cd ke repo lain");
+    agnc_repl_help_note("Config global = ~/.agnc.json; sesi = ~/.agnc/sessions/*.sqlite");
+    agnc_repl_help_note("Root MCP filesystem = mcp.servers[].args; setelah edit: /mcp reconnect");
+
+    agnc_repl_help_section("Keyboard");
+    agnc_repl_help_cmd("Ctrl+C (idle)", "Keluar REPL");
+    agnc_repl_help_cmd("Ctrl+C (request/bg)", "Batalkan tanpa keluar");
+    agnc_repl_help_cmd("Ctrl+Enter", "Baris baru di prompt (multi-line)");
+    agnc_repl_help_cmd("↑ / ↓", "History perintah (32 baris)");
+
+    agnc_console_repl_printf("\n");
     agnc_console_end_repl_output();
 }
 
