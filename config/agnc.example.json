@@ -82,6 +82,9 @@
     "verbose": false,
     "tui": false
   },
+  "sessions": {
+    "restore_routing": false
+  },
   "paths": {
     "sessions_dir": "~/.agnc/sessions",
     "cache_dir": "~/.agnc/cache"

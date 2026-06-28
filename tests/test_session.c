@@ -98,12 +98,15 @@ static void test_session_save_load_roundtrip(void **state)
     assert_int_equal(status, AGNC_STATUS_OK);
 
     agnc_conversation_init(&loaded);
-    status = agnc_session_load(g_session_path, &loaded, &provider_id, &model);
+    status = agnc_session_load(g_session_path, &loaded, NULL, NULL);
     assert_int_equal(status, AGNC_STATUS_OK);
     assert_int_equal(loaded.count, 3);
     assert_string_equal(loaded.items[1].role, "user");
     assert_string_equal(loaded.items[1].content, "hello");
     assert_string_equal(loaded.items[2].content, "hi there");
+
+    status = agnc_session_load_routing_hint(g_session_path, &provider_id, NULL, &model);
+    assert_int_equal(status, AGNC_STATUS_OK);
     assert_non_null(provider_id);
     assert_string_equal(provider_id, "openrouter");
     assert_non_null(model);
@@ -111,6 +114,53 @@ static void test_session_save_load_roundtrip(void **state)
 
     free(provider_id);
     free(model);
+    agnc_conversation_clear(&loaded);
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+}
+
+static void test_session_message_routing_roundtrip(void **state)
+{
+    agnc_conversation_t conversation;
+    agnc_conversation_t loaded;
+    agnc_config_t config;
+    agnc_status_t status;
+
+    (void)state;
+
+    agnc_conversation_init(&conversation);
+    agnc_config_init(&config);
+#ifdef _MSC_VER
+    config.provider_id = _strdup("ollama");
+    config.model = _strdup("qwen2.5-coder:7b");
+    config.gateway_id = _strdup("ollama");
+#else
+    config.provider_id = strdup("ollama");
+    config.model = strdup("qwen2.5-coder:7b");
+    config.gateway_id = strdup("ollama");
+#endif
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "hello", NULL, NULL, NULL), AGNC_STATUS_OK);
+    agnc_conversation_apply_config_routing_to_last(&conversation, &config);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "assistant", "hi", NULL, NULL, NULL), AGNC_STATUS_OK);
+    agnc_conversation_apply_config_routing_to_last(&conversation, &config);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+
+    agnc_conversation_init(&loaded);
+    status = agnc_session_load(g_session_path, &loaded, NULL, NULL);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal(loaded.count, 2);
+    assert_non_null(loaded.items[0].provider_id);
+    assert_string_equal(loaded.items[0].provider_id, "ollama");
+    assert_non_null(loaded.items[0].model);
+    assert_string_equal(loaded.items[0].model, "qwen2.5-coder:7b");
+    assert_non_null(loaded.items[1].provider_id);
+    assert_string_equal(loaded.items[1].provider_id, "ollama");
+    assert_non_null(loaded.items[1].model);
+    assert_string_equal(loaded.items[1].model, "qwen2.5-coder:7b");
+
     agnc_conversation_clear(&loaded);
     agnc_conversation_clear(&conversation);
     agnc_config_free(&config);
@@ -572,6 +622,7 @@ int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_session_save_load_roundtrip, setup_session_path, teardown_session_path),
+        cmocka_unit_test_setup_teardown(test_session_message_routing_roundtrip, setup_session_path, teardown_session_path),
         cmocka_unit_test(test_session_cleanup_stale_temp_files),
         cmocka_unit_test(test_conversation_ensure_system_updates),
         cmocka_unit_test(test_conversation_trim_after_sync),

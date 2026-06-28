@@ -206,7 +206,9 @@ Slash commands: `/help`, `/clear`, `/cls`, `/compact`, `/model`, `/models`, `/pr
 
 **TUI eksperimental (`runtime.tui: true`):** status bar bawah, panel `/view tools|jobs|off`. **Nonaktif secara default** — layout ANSI+Win32 belum stabil di Windows; rencana penggantian notcurses di Fase 6.25 (`roadmap.md`). Jika Anda punya `"tui": true` di `~/.agnc.json`, set ke `false` lalu restart agnc.
 
-**Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis. Schema v2: WAL, kolom `is_bg`/`job_id` di `messages`, tabel `bg_jobs` untuk job background.
+**Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis. Schema v2: WAL, kolom `is_bg`/`job_id` di `messages`, tabel `bg_jobs` untuk job background. Schema v3: kolom `provider_id`/`gateway_id`/`model` per pesan (label model di timestamp assistant); meta `last_*` hanya hint routing terakhir.
+
+**Routing vs sesi:** provider/model aktif REPL mengikuti `~/.agnc.json` dan `/provider` `/model` — **bukan** terkunci ke sesi. Pindah sesi (`/session <nama>`) hanya memuat riwayat chat. Untuk memulihkan provider/model terakhir sesi: `/session <nama> --routing` atau set `sessions.restore_routing: true` di config (startup + setiap `/session`).
 
 **Background jobs:** `/bg <prompt>` atau prefix `&` menjalankan prompt di worker terpisah dengan konteks sesi aktif (snapshot foreground saat submit). Hasil detail disimpan di sesi induk (`is_bg=1`); ringkasan `[bg #N]` muncul di riwayat foreground + notifikasi REPL. Antre FIFO (maks 16); `/jobs`, `/jobs cancel`, `/jobs clear`. File legacy `bg-*.sqlite` dihapus otomatis saat startup REPL.
 

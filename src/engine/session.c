@@ -48,7 +48,10 @@
     "  tool_arguments TEXT," \
     "  parent_id INTEGER," \
     "  is_bg INTEGER NOT NULL DEFAULT 0," \
-    "  job_id INTEGER" \
+    "  job_id INTEGER," \
+    "  provider_id TEXT," \
+    "  gateway_id TEXT," \
+    "  model TEXT" \
     ");" \
     "CREATE TABLE IF NOT EXISTS bg_jobs (" \
     "  id INTEGER PRIMARY KEY," \
@@ -818,9 +821,28 @@ static agnc_status_t agnc_session_sqlite_migrate(sqlite3 *db)
         return status;
     }
 
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "provider_id")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN provider_id TEXT");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "gateway_id")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN gateway_id TEXT");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "model")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN model TEXT");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+
     return agnc_session_sqlite_exec_simple(
         db,
-        "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '2')");
+        "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '3')");
 }
 
 static agnc_status_t agnc_session_sqlite_prepare(sqlite3 *db)
@@ -926,6 +948,80 @@ static agnc_status_t agnc_session_sqlite_meta_set(sqlite3 *db, const char *key, 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
+static agnc_status_t agnc_session_sqlite_meta_get_fallback(
+    sqlite3 *db,
+    const char *primary_key,
+    const char *legacy_key,
+    char **value_out)
+{
+    agnc_status_t status;
+    char *value = NULL;
+
+    if (value_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *value_out = NULL;
+    status = agnc_session_sqlite_meta_get(db, primary_key, &value);
+    if (status != AGNC_STATUS_OK) {
+        free(value);
+        return status;
+    }
+
+    if (value == NULL && legacy_key != NULL) {
+        status = agnc_session_sqlite_meta_get(db, legacy_key, &value);
+        if (status != AGNC_STATUS_OK) {
+            free(value);
+            return status;
+        }
+    }
+
+    *value_out = value;
+    return AGNC_STATUS_OK;
+}
+
+static agnc_status_t agnc_session_sqlite_load_routing_hint_db(
+    sqlite3 *db,
+    char **provider_id_out,
+    char **gateway_id_out,
+    char **model_out)
+{
+    agnc_status_t status = AGNC_STATUS_OK;
+
+    if (provider_id_out != NULL) {
+        status = agnc_session_sqlite_meta_get_fallback(db, "last_provider_id", "provider_id", provider_id_out);
+    }
+    if (status == AGNC_STATUS_OK && gateway_id_out != NULL) {
+        status = agnc_session_sqlite_meta_get_fallback(db, "last_gateway_id", "gateway_id", gateway_id_out);
+    }
+    if (status == AGNC_STATUS_OK && model_out != NULL) {
+        status = agnc_session_sqlite_meta_get_fallback(db, "last_model", "model", model_out);
+    }
+
+    return status;
+}
+
+static agnc_status_t agnc_session_sqlite_bind_message_routing(
+    sqlite3_stmt *stmt,
+    const agnc_conversation_message_t *item)
+{
+    agnc_status_t status;
+
+    if (stmt == NULL || item == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = agnc_session_sqlite_bind_text_or_null(stmt, 9, item->provider_id);
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 10, item->gateway_id);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 11, item->model);
+    }
+
+    return status;
 }
 
 static agnc_status_t agnc_session_load_json_file(
@@ -1082,20 +1178,20 @@ static agnc_status_t agnc_session_write_sqlite_file(
 
     if (config != NULL) {
         if (config->provider_id != NULL &&
-            agnc_session_sqlite_meta_set(db, "provider_id", config->provider_id) != AGNC_STATUS_OK) {
+            agnc_session_sqlite_meta_set(db, "last_provider_id", config->provider_id) != AGNC_STATUS_OK) {
             (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
             sqlite3_close(db);
             (void)remove(path);
             return AGNC_STATUS_IO_ERROR;
         }
-        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "model", config->model) != AGNC_STATUS_OK) {
+        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "last_model", config->model) != AGNC_STATUS_OK) {
             (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
             sqlite3_close(db);
             (void)remove(path);
             return AGNC_STATUS_IO_ERROR;
         }
         if (config->gateway_id != NULL &&
-            agnc_session_sqlite_meta_set(db, "gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
+            agnc_session_sqlite_meta_set(db, "last_gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
             (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
             sqlite3_close(db);
             (void)remove(path);
@@ -1105,8 +1201,9 @@ static agnc_status_t agnc_session_write_sqlite_file(
 
     rc = sqlite3_prepare_v2(
         db,
-        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id, "
+        "provider_id, gateway_id, model) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         -1,
         &insert_stmt,
         NULL);
@@ -1151,6 +1248,9 @@ static agnc_status_t agnc_session_write_sqlite_file(
         }
         if (status == AGNC_STATUS_OK) {
             status = agnc_session_sqlite_bind_int64_or_null(insert_stmt, 8, item->job_id);
+        }
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_message_routing(insert_stmt, item);
         }
         if (status != AGNC_STATUS_OK) {
             break;
@@ -1236,14 +1336,14 @@ static agnc_status_t agnc_session_sqlite_update_meta(
 
     if (config != NULL) {
         if (config->provider_id != NULL &&
-            agnc_session_sqlite_meta_set(db, "provider_id", config->provider_id) != AGNC_STATUS_OK) {
+            agnc_session_sqlite_meta_set(db, "last_provider_id", config->provider_id) != AGNC_STATUS_OK) {
             return AGNC_STATUS_IO_ERROR;
         }
-        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "model", config->model) != AGNC_STATUS_OK) {
+        if (config->model != NULL && agnc_session_sqlite_meta_set(db, "last_model", config->model) != AGNC_STATUS_OK) {
             return AGNC_STATUS_IO_ERROR;
         }
         if (config->gateway_id != NULL &&
-            agnc_session_sqlite_meta_set(db, "gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
+            agnc_session_sqlite_meta_set(db, "last_gateway_id", config->gateway_id) != AGNC_STATUS_OK) {
             return AGNC_STATUS_IO_ERROR;
         }
     }
@@ -1263,8 +1363,9 @@ static agnc_status_t agnc_session_sqlite_append_message(sqlite3 *db, const agnc_
 
     rc = sqlite3_prepare_v2(
         db,
-        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id, "
+        "provider_id, gateway_id, model) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         -1,
         &stmt,
         NULL);
@@ -1297,6 +1398,9 @@ static agnc_status_t agnc_session_sqlite_append_message(sqlite3 *db, const agnc_
     }
     if (status == AGNC_STATUS_OK) {
         status = agnc_session_sqlite_bind_int64_or_null(stmt, 8, item->job_id);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_message_routing(stmt, item);
     }
     if (status != AGNC_STATUS_OK) {
         sqlite3_finalize(stmt);
@@ -1358,11 +1462,20 @@ static agnc_status_t agnc_session_load_sqlite_tail(
     }
 
     if (provider_id_out != NULL) {
-        status = agnc_session_sqlite_meta_get(db, "provider_id", provider_id_out);
+        *provider_id_out = NULL;
     }
-    if (status == AGNC_STATUS_OK && model_out != NULL) {
-        status = agnc_session_sqlite_meta_get(db, "model", model_out);
+    if (model_out != NULL) {
+        *model_out = NULL;
     }
+
+    if (provider_id_out != NULL || model_out != NULL) {
+        status = agnc_session_sqlite_load_routing_hint_db(db, provider_id_out, NULL, model_out);
+        if (status != AGNC_STATUS_OK) {
+            sqlite3_close(db);
+            return status;
+        }
+    }
+
     if (status == AGNC_STATUS_OK) {
         char *summary = NULL;
         if (agnc_session_sqlite_meta_get(db, "history_summary", &summary) == AGNC_STATUS_OK) {
@@ -1377,7 +1490,7 @@ static agnc_status_t agnc_session_load_sqlite_tail(
 
     rc = sqlite3_prepare_v2(
         db,
-        "SELECT role, content, tool_call_id, tool_name, tool_arguments "
+        "SELECT role, content, tool_call_id, tool_name, tool_arguments, provider_id, gateway_id, model "
         "FROM messages WHERE COALESCE(is_bg, 0) = 0 "
         "ORDER BY id ASC LIMIT -1 OFFSET ?",
         -1,
@@ -1400,13 +1513,24 @@ static agnc_status_t agnc_session_load_sqlite_tail(
         const char *tool_call_id = (const char *)sqlite3_column_text(stmt, 2);
         const char *tool_name = (const char *)sqlite3_column_text(stmt, 3);
         const char *tool_arguments = (const char *)sqlite3_column_text(stmt, 4);
+        const char *provider_id = (const char *)sqlite3_column_text(stmt, 5);
+        const char *gateway_id = (const char *)sqlite3_column_text(stmt, 6);
+        const char *model = (const char *)sqlite3_column_text(stmt, 7);
 
         if (role == NULL) {
             continue;
         }
 
-        status = agnc_conversation_push_hydrated(
-            conversation, role, content, tool_call_id, tool_name, tool_arguments);
+        status = agnc_conversation_push_hydrated_routing(
+            conversation,
+            role,
+            content,
+            tool_call_id,
+            tool_name,
+            tool_arguments,
+            provider_id,
+            gateway_id,
+            model);
         if (status != AGNC_STATUS_OK) {
             break;
         }
@@ -1740,6 +1864,53 @@ agnc_status_t agnc_session_load(
     }
 
     return agnc_session_load_sqlite_file(path, conversation, provider_id_out, model_out);
+}
+
+agnc_status_t agnc_session_load_routing_hint(
+    const char *path,
+    char **provider_id_out,
+    char **gateway_id_out,
+    char **model_out)
+{
+    sqlite3 *db = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (provider_id_out != NULL) {
+        *provider_id_out = NULL;
+    }
+    if (gateway_id_out != NULL) {
+        *gateway_id_out = NULL;
+    }
+    if (model_out != NULL) {
+        *model_out = NULL;
+    }
+
+    if (!agnc_path_exists(path)) {
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    status = agnc_session_sqlite_load_routing_hint_db(db, provider_id_out, gateway_id_out, model_out);
+    sqlite3_close(db);
+    return status;
 }
 
 agnc_status_t agnc_session_sync(
@@ -2507,7 +2678,7 @@ agnc_status_t agnc_session_load_bg_context(
 
     rc = sqlite3_prepare_v2(
         db,
-        "SELECT role, content, tool_call_id, tool_name, tool_arguments "
+        "SELECT role, content, tool_call_id, tool_name, tool_arguments, provider_id, gateway_id, model "
         "FROM messages "
         "WHERE COALESCE(is_bg, 0) = 0 AND (? <= 0 OR id <= ?) "
         "ORDER BY id ASC LIMIT -1 OFFSET ?",
@@ -2533,13 +2704,24 @@ agnc_status_t agnc_session_load_bg_context(
         const char *tool_call_id = (const char *)sqlite3_column_text(load_stmt, 2);
         const char *tool_name = (const char *)sqlite3_column_text(load_stmt, 3);
         const char *tool_arguments = (const char *)sqlite3_column_text(load_stmt, 4);
+        const char *provider_id = (const char *)sqlite3_column_text(load_stmt, 5);
+        const char *gateway_id = (const char *)sqlite3_column_text(load_stmt, 6);
+        const char *model = (const char *)sqlite3_column_text(load_stmt, 7);
 
         if (role == NULL) {
             continue;
         }
 
-        status = agnc_conversation_push_hydrated(
-            conversation, role, content, tool_call_id, tool_name, tool_arguments);
+        status = agnc_conversation_push_hydrated_routing(
+            conversation,
+            role,
+            content,
+            tool_call_id,
+            tool_name,
+            tool_arguments,
+            provider_id,
+            gateway_id,
+            model);
         if (status != AGNC_STATUS_OK) {
             break;
         }

@@ -1058,6 +1058,7 @@ void agnc_config_init(agnc_config_t *config)
     config->skills_enabled = 1;
     config->hooks_enabled = 0;
     config->tui_enabled = 0;
+    config->sessions_restore_routing = 0;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;
@@ -1136,6 +1137,9 @@ static const char AGNC_CONFIG_BOOTSTRAP_JSON[] =
     "    \"stream\": true,\n"
     "    \"verbose\": false,\n"
     "    \"tui\": false\n"
+    "  },\n"
+    "  \"sessions\": {\n"
+    "    \"restore_routing\": false\n"
     "  },\n"
     "  \"paths\": {\n"
     "    \"sessions_dir\": \"~/.agnc/sessions\",\n"
@@ -1280,6 +1284,16 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
 
     root = yyjson_doc_get_root(doc);
     runtime = yyjson_obj_get(root, "runtime");
+    {
+        yyjson_val *sessions = yyjson_obj_get(root, "sessions");
+
+        if (sessions != NULL) {
+            value = yyjson_obj_get(sessions, "restore_routing");
+            if (value != NULL && yyjson_is_bool(value)) {
+                config->sessions_restore_routing = yyjson_get_bool(value) ? 1 : 0;
+            }
+        }
+    }
 
     status = agnc_config_resolve_provider(root, config, NULL);
     if (status != AGNC_STATUS_OK) {

@@ -34,6 +34,7 @@ typedef struct {
     int stream;
     int verbose;
     int tui_enabled;
+    int sessions_restore_routing;
     int enable_tools;
     int tool_read_file;
     int tool_shell;

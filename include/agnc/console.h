@@ -43,6 +43,7 @@ void agnc_console_clear_input_line(void);
 /* REPL chat blocks — timestamp di baris sendiri, lalu isi pesan. */
 void agnc_console_print_chat_user(const char *text);
 void agnc_console_print_chat_assistant_begin(void);
+void agnc_console_print_chat_assistant_begin_routed(const char *routing_label);
 void agnc_console_print_chat_system(const char *text);
 
 /* Hentikan spinner lalu tampilkan prompt izin tool (REPL). */

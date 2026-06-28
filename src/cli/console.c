@@ -248,6 +248,42 @@ static void agnc_console_print_chat_timestamp_line(void)
     agnc_tui_chat_newline();
 }
 
+static void agnc_console_print_chat_timestamp_routing_line(const char *routing_label)
+{
+    char time_buf[16];
+
+    agnc_console_format_time_hms(time_buf, sizeof(time_buf));
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_before_write();
+        if (agnc_console_vt_enabled()) {
+            if (routing_label != NULL && routing_label[0] != '\0') {
+                printf(ANSI_DIM "%s · %s" ANSI_RESET, time_buf, routing_label);
+            } else {
+                printf(ANSI_DIM "%s" ANSI_RESET, time_buf);
+            }
+        } else if (routing_label != NULL && routing_label[0] != '\0') {
+            printf("%s · %s", time_buf, routing_label);
+        } else {
+            printf("%s", time_buf);
+        }
+        agnc_tui_chat_flush_stdio();
+    } else if (agnc_console_vt_enabled()) {
+        if (routing_label != NULL && routing_label[0] != '\0') {
+            printf(ANSI_DIM "%s · %s" ANSI_RESET "\n", time_buf, routing_label);
+        } else {
+            printf(ANSI_DIM "%s" ANSI_RESET "\n", time_buf);
+        }
+        fflush(stdout);
+    } else if (routing_label != NULL && routing_label[0] != '\0') {
+        printf("%s · %s\n", time_buf, routing_label);
+        fflush(stdout);
+    } else {
+        printf("%s\n", time_buf);
+        fflush(stdout);
+    }
+    agnc_tui_chat_newline();
+}
+
 void agnc_console_print_chat_user(const char *text)
 {
     agnc_tui_begin_chat_output();
@@ -281,8 +317,13 @@ void agnc_console_print_chat_user(const char *text)
 
 void agnc_console_print_chat_assistant_begin(void)
 {
+    agnc_console_print_chat_assistant_begin_routed(NULL);
+}
+
+void agnc_console_print_chat_assistant_begin_routed(const char *routing_label)
+{
     agnc_tui_begin_chat_output();
-    agnc_console_print_chat_timestamp_line();
+    agnc_console_print_chat_timestamp_routing_line(routing_label);
 }
 
 void agnc_console_print_chat_system(const char *text)

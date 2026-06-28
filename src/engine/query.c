@@ -1085,6 +1085,44 @@ static const char *agnc_query_last_user_text(const agnc_conversation_t *conversa
     return NULL;
 }
 
+static agnc_status_t agnc_query_push_message(
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config,
+    const char *role,
+    const char *content,
+    const char *tool_call_id,
+    const char *tool_name,
+    const char *tool_arguments)
+{
+    agnc_status_t status;
+
+    status = agnc_conversation_push(
+        conversation, role, content, tool_call_id, tool_name, tool_arguments);
+    if (status == AGNC_STATUS_OK && config != NULL) {
+        agnc_conversation_apply_config_routing_to_last(conversation, config);
+    }
+
+    return status;
+}
+
+static void agnc_query_format_routing_label(const agnc_config_t *config, char *out, size_t out_cap)
+{
+    if (out == NULL || out_cap == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (config == NULL) {
+        return;
+    }
+
+    if (config->model != NULL && config->model[0] != '\0') {
+        snprintf(out, out_cap, "%s", config->model);
+    } else if (config->provider_id != NULL && config->provider_id[0] != '\0') {
+        snprintf(out, out_cap, "%s", config->provider_id);
+    }
+}
+
 static agnc_status_t agnc_run_provider_turn(
     const agnc_config_t *config,
     const agnc_conversation_t *conversation,
@@ -1427,7 +1465,7 @@ agnc_status_t agnc_query_run(
             config->tool_shell = 0;
         }
 
-        status = agnc_conversation_push(conversation, "user", user_prompt, NULL, NULL, NULL);
+        status = agnc_query_push_message(conversation, config, "user", user_prompt, NULL, NULL, NULL);
         if (status != AGNC_STATUS_OK) {
             return status;
         }
@@ -1515,7 +1553,11 @@ agnc_status_t agnc_query_run(
 
             if (!suppress_chat_output && (has_content || agnc_sse_parser_printed_any(&parser))) {
                 if (chat_assistant_timestamp) {
-                    agnc_console_print_chat_assistant_begin();
+                    char routing_label[128];
+
+                    agnc_query_format_routing_label(config, routing_label, sizeof(routing_label));
+                    agnc_console_print_chat_assistant_begin_routed(
+                        routing_label[0] != '\0' ? routing_label : NULL);
                 }
                 if (has_content) {
                     agnc_console_print_assistant_body(content);
@@ -1524,7 +1566,7 @@ agnc_status_t agnc_query_run(
             }
 
             if (has_content) {
-                status = agnc_conversation_push(conversation, "assistant", content, NULL, NULL, NULL);
+                status = agnc_query_push_message(conversation, config, "assistant", content, NULL, NULL, NULL);
                 if (status != AGNC_STATUS_OK) {
                     goto cleanup;
                 }
@@ -1572,8 +1614,8 @@ agnc_status_t agnc_query_run(
                 fprintf(stderr, "agnc: tool call %s(%s)\n", tool_call->name, arguments != NULL ? arguments : "{}");
             }
 
-            status = agnc_conversation_push(
-                conversation, "assistant", NULL, tool_id, tool_call->name, arguments);
+            status = agnc_query_push_message(
+                conversation, config, "assistant", NULL, tool_id, tool_call->name, arguments);
             if (status != AGNC_STATUS_OK) {
                 free(arguments);
                 goto cleanup;
@@ -1596,8 +1638,9 @@ agnc_status_t agnc_query_run(
                         goto cleanup;
                     }
                     agnc_query_truncate_tool_result(&tool_result);
-                    status = agnc_conversation_push(
+                    status = agnc_query_push_message(
                         conversation,
+                        config,
                         "tool",
                         tool_result,
                         tool_id,
@@ -1647,8 +1690,9 @@ agnc_status_t agnc_query_run(
                 agnc_query_fire_hook(config, AGNC_HOOK_EVENT_POST_TOOL, &hook_input, NULL);
             }
 
-            status = agnc_conversation_push(
+            status = agnc_query_push_message(
                 conversation,
+                config,
                 "tool",
                 tool_result != NULL ? tool_result : "error: tool failed",
                 tool_id,

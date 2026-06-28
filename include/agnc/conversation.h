@@ -8,9 +8,9 @@
 #ifndef AGNC_CONVERSATION_H
 #define AGNC_CONVERSATION_H
 
+#include "agnc/config.h"
 #include "agnc/status.h"
 
-#include <stddef.h>
 #include <stdint.h>
 
 /* Pesan dimuat ke RAM (lazy load dari SQLite). */
@@ -33,6 +33,9 @@ typedef struct {
     int64_t parent_id; /* 0 = NULL di SQLite */
     int is_bg;
     int job_id; /* 0 = NULL di SQLite */
+    char *provider_id;
+    char *gateway_id;
+    char *model;
 } agnc_conversation_message_t;
 
 typedef struct {
@@ -66,6 +69,28 @@ agnc_status_t agnc_conversation_push_hydrated(
     const char *tool_call_id,
     const char *tool_name,
     const char *tool_arguments);
+
+agnc_status_t agnc_conversation_push_hydrated_routing(
+    agnc_conversation_t *conversation,
+    const char *role,
+    const char *content,
+    const char *tool_call_id,
+    const char *tool_name,
+    const char *tool_arguments,
+    const char *provider_id,
+    const char *gateway_id,
+    const char *model);
+
+/* Salin provider/gateway/model ke pesan terakhir (turn aktif). */
+void agnc_conversation_apply_config_routing_to_last(
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config);
+
+/* Label singkat untuk UI, mis. "ollama/qwen2.5". Return 0 jika kosong. */
+size_t agnc_conversation_format_routing_label(
+    const agnc_conversation_message_t *message,
+    char *out,
+    size_t out_cap);
 
 agnc_status_t agnc_conversation_ensure_system(agnc_conversation_t *conversation, const char *system_prompt);
 

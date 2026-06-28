@@ -6,6 +6,7 @@
 
 #include "agnc/conversation.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,6 +64,9 @@ static void agnc_conversation_free_message(agnc_conversation_message_t *message)
     free(message->tool_call_id);
     free(message->tool_name);
     free(message->tool_arguments);
+    free(message->provider_id);
+    free(message->gateway_id);
+    free(message->model);
     memset(message, 0, sizeof(*message));
 }
 
@@ -158,6 +162,29 @@ agnc_status_t agnc_conversation_push_hydrated(
     const char *tool_name,
     const char *tool_arguments)
 {
+    return agnc_conversation_push_hydrated_routing(
+        conversation,
+        role,
+        content,
+        tool_call_id,
+        tool_name,
+        tool_arguments,
+        NULL,
+        NULL,
+        NULL);
+}
+
+agnc_status_t agnc_conversation_push_hydrated_routing(
+    agnc_conversation_t *conversation,
+    const char *role,
+    const char *content,
+    const char *tool_call_id,
+    const char *tool_name,
+    const char *tool_arguments,
+    const char *provider_id,
+    const char *gateway_id,
+    const char *model)
+{
     agnc_conversation_message_t *message;
     agnc_status_t status;
 
@@ -179,6 +206,9 @@ agnc_status_t agnc_conversation_push_hydrated(
     message->parent_id = 0;
     message->is_bg = 0;
     message->job_id = 0;
+    message->provider_id = provider_id != NULL ? agnc_strdup_local(provider_id) : NULL;
+    message->gateway_id = gateway_id != NULL ? agnc_strdup_local(gateway_id) : NULL;
+    message->model = model != NULL ? agnc_strdup_local(model) : NULL;
 
     if (message->role == NULL) {
         conversation->count--;
@@ -186,6 +216,51 @@ agnc_status_t agnc_conversation_push_hydrated(
     }
 
     return AGNC_STATUS_OK;
+}
+
+void agnc_conversation_apply_config_routing_to_last(
+    agnc_conversation_t *conversation,
+    const agnc_config_t *config)
+{
+    agnc_conversation_message_t *message;
+
+    if (conversation == NULL || conversation->count == 0 || config == NULL) {
+        return;
+    }
+
+    message = &conversation->items[conversation->count - 1];
+    free(message->provider_id);
+    free(message->gateway_id);
+    free(message->model);
+    message->provider_id =
+        config->provider_id != NULL ? agnc_strdup_local(config->provider_id) : NULL;
+    message->gateway_id = config->gateway_id != NULL ? agnc_strdup_local(config->gateway_id) : NULL;
+    message->model = config->model != NULL ? agnc_strdup_local(config->model) : NULL;
+}
+
+size_t agnc_conversation_format_routing_label(
+    const agnc_conversation_message_t *message,
+    char *out,
+    size_t out_cap)
+{
+    if (out == NULL || out_cap == 0) {
+        return 0;
+    }
+
+    out[0] = '\0';
+    if (message == NULL) {
+        return 0;
+    }
+
+    if (message->model != NULL && message->model[0] != '\0') {
+        return (size_t)snprintf(out, out_cap, "%s", message->model);
+    }
+
+    if (message->provider_id != NULL && message->provider_id[0] != '\0') {
+        return (size_t)snprintf(out, out_cap, "%s", message->provider_id);
+    }
+
+    return 0;
 }
 
 void agnc_conversation_mark_unsynced_bg(agnc_conversation_t *conversation, int job_id)

@@ -59,6 +59,13 @@ agnc_status_t agnc_session_load(
     char **provider_id_out,
     char **model_out);
 
+/* Hint routing terakhir di meta sesi (last_*; fallback ke kunci legacy). */
+agnc_status_t agnc_session_load_routing_hint(
+    const char *path,
+    char **provider_id_out,
+    char **gateway_id_out,
+    char **model_out);
+
 /* Append pesan baru (unsynced) + meta; menggantikan full rewrite. */
 agnc_status_t agnc_session_sync(
     const char *path,

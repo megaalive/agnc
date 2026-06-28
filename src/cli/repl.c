@@ -237,7 +237,7 @@ static void agnc_repl_print_help(void)
     agnc_console_repl_printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
     agnc_console_repl_printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
     agnc_console_repl_printf("  /session           Daftar sesi tersimpan (/sessions = alias)\n");
-    agnc_console_repl_printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
+    agnc_console_repl_printf("  /session <nama>    Pindah sesi (riwayat saja; tambah --routing untuk restore model)\n");
     agnc_console_repl_printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
     agnc_console_repl_printf("  /session delete <nama>  Hapus file sesi dari disk\n");
     agnc_console_repl_printf("  /doctor            Jalankan health check\n");
@@ -504,9 +504,10 @@ static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
     return AGNC_STATUS_OK;
 }
 
-static void agnc_repl_apply_loaded_session_meta(
+static void agnc_repl_apply_loaded_session_routing(
     agnc_config_t *config,
     char *loaded_provider,
+    char *loaded_gateway,
     char *loaded_model)
 {
     if (loaded_provider != NULL) {
@@ -517,13 +518,87 @@ static void agnc_repl_apply_loaded_session_meta(
 #endif
         (void)agnc_repl_reload_config(config);
     }
+
+    if (loaded_gateway != NULL) {
+        free(config->gateway_id);
+        config->gateway_id = loaded_gateway;
+        loaded_gateway = NULL;
+    }
+
     if (loaded_model != NULL) {
         free(config->model);
         config->model = loaded_model;
         loaded_model = NULL;
     }
+
     free(loaded_provider);
+    free(loaded_gateway);
     free(loaded_model);
+}
+
+static int agnc_repl_session_parse_target(
+    const char *arg,
+    char *name_out,
+    size_t name_cap,
+    int *restore_routing_out)
+{
+    const char *flag;
+    size_t name_len;
+
+    if (name_out == NULL || name_cap == 0 || restore_routing_out == NULL || arg == NULL) {
+        return -1;
+    }
+
+    name_out[0] = '\0';
+
+    flag = strstr(arg, " --routing");
+    if (flag != NULL && (flag[11] == '\0' || flag[11] == ' ' || flag[11] == '\t')) {
+        *restore_routing_out = 1;
+        name_len = (size_t)(flag - arg);
+    } else {
+        name_len = strlen(arg);
+    }
+
+    if (name_len == 0 || name_len >= name_cap) {
+        return -1;
+    }
+
+    memcpy(name_out, arg, name_len);
+    name_out[name_len] = '\0';
+    agnc_repl_trim(name_out);
+    return name_out[0] != '\0' ? 0 : -1;
+}
+
+static void agnc_repl_print_session_switch_detail(
+    const char *session_name,
+    int restored_routing,
+    const char *last_provider,
+    const char *last_model)
+{
+    char detail[320];
+
+    if (restored_routing) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "sesi aktif: %s (provider/model dipulihkan dari sesi)",
+            session_name != NULL ? session_name : "?");
+    } else if (
+        (last_provider != NULL && last_provider[0] != '\0') ||
+        (last_model != NULL && last_model[0] != '\0')) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "sesi aktif: %s (last: %s / %s — gunakan /session %s --routing)",
+            session_name != NULL ? session_name : "?",
+            last_provider != NULL && last_provider[0] != '\0' ? last_provider : "?",
+            last_model != NULL && last_model[0] != '\0' ? last_model : "?",
+            session_name != NULL ? session_name : "?");
+    } else {
+        snprintf(detail, sizeof(detail), "sesi aktif: %s", session_name != NULL ? session_name : "?");
+    }
+
+    agnc_console_print_chat_system(detail);
 }
 
 static void agnc_repl_notify_memory_window(agnc_conversation_t *conversation)
@@ -584,10 +659,12 @@ static agnc_status_t agnc_repl_switch_session(
     agnc_conversation_t *conversation,
     agnc_session_usage_t *session_usage,
     int force_empty,
-    int skip_save)
+    int skip_save,
+    int restore_routing)
 {
     char *new_path = NULL;
     char *loaded_provider = NULL;
+    char *loaded_gateway = NULL;
     char *loaded_model = NULL;
     agnc_status_t status;
 
@@ -608,10 +685,17 @@ static agnc_status_t agnc_repl_switch_session(
     agnc_conversation_clear(conversation);
 
     if (!force_empty && agnc_path_exists(new_path)) {
-        if (agnc_session_load(new_path, conversation, &loaded_provider, &loaded_model) == AGNC_STATUS_OK) {
-            agnc_repl_apply_loaded_session_meta(config, loaded_provider, loaded_model);
-            loaded_provider = NULL;
-            loaded_model = NULL;
+        if (agnc_session_load(new_path, conversation, NULL, NULL) == AGNC_STATUS_OK) {
+            if (restore_routing) {
+                if (agnc_session_load_routing_hint(
+                        new_path, &loaded_provider, &loaded_gateway, &loaded_model) == AGNC_STATUS_OK) {
+                    agnc_repl_apply_loaded_session_routing(
+                        config, loaded_provider, loaded_gateway, loaded_model);
+                    loaded_provider = NULL;
+                    loaded_gateway = NULL;
+                    loaded_model = NULL;
+                }
+            }
             agnc_repl_notify_memory_window(conversation);
         }
     } else {
@@ -628,6 +712,20 @@ static agnc_status_t agnc_repl_switch_session(
     }
 
     agnc_repl_usage_reload(session_usage, new_path);
+
+    if (!force_empty && agnc_path_exists(new_path) && !restore_routing) {
+        char *hint_provider = NULL;
+        char *hint_model = NULL;
+
+        if (agnc_session_load_routing_hint(new_path, &hint_provider, NULL, &hint_model) == AGNC_STATUS_OK) {
+            agnc_repl_print_session_switch_detail(name, 0, hint_provider, hint_model);
+        }
+        free(hint_provider);
+        free(hint_model);
+    } else if (restore_routing) {
+        agnc_repl_print_session_switch_detail(name, 1, config->provider_id, config->model);
+    }
+
     return agnc_session_active_name_save(name);
 }
 
@@ -657,7 +755,7 @@ static agnc_status_t agnc_repl_delete_session(
     is_active = *active_session_name != NULL && strcmp(*active_session_name, name) == 0;
     if (is_active) {
         status = agnc_repl_switch_session(
-            "current", session_path, active_session_name, config, conversation, session_usage, 1, 1);
+            "current", session_path, active_session_name, config, conversation, session_usage, 1, 1, 0);
         if (status != AGNC_STATUS_OK) {
             return status;
         }
@@ -1077,7 +1175,7 @@ static int agnc_repl_handle_slash(
             }
 
             switch_status = agnc_repl_switch_session(
-                new_name, session_path, active_session_name, config, conversation, session_usage, 1, 0);
+                new_name, session_path, active_session_name, config, conversation, session_usage, 1, 0, 0);
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session new gagal");
                 fprintf(stderr, "agnc: %s\n", agnc_status_to_string(switch_status));
@@ -1099,8 +1197,25 @@ static int agnc_repl_handle_slash(
         }
 
         {
-            agnc_status_t switch_status = agnc_repl_switch_session(
-                arg, session_path, active_session_name, config, conversation, session_usage, 0, 0);
+            char target_name[64];
+            int restore_routing = config->sessions_restore_routing;
+            agnc_status_t switch_status;
+
+            if (agnc_repl_session_parse_target(arg, target_name, sizeof(target_name), &restore_routing) != 0) {
+                agnc_console_print_chat_system("session: nama tidak valid");
+                return 1;
+            }
+
+            switch_status = agnc_repl_switch_session(
+                target_name,
+                session_path,
+                active_session_name,
+                config,
+                conversation,
+                session_usage,
+                0,
+                0,
+                restore_routing);
 
             if (switch_status != AGNC_STATUS_OK) {
                 agnc_console_print_chat_system("session gagal");
@@ -1115,9 +1230,6 @@ static int agnc_repl_handle_slash(
                 if (last_usage_total != NULL) {
                     *last_usage_total = -1;
                 }
-                char detail[80];
-                snprintf(detail, sizeof(detail), "sesi aktif: %s", arg);
-                agnc_console_print_chat_system(detail);
             }
         }
         return 1;
@@ -1368,10 +1480,20 @@ int agnc_cli_run_interactive(void)
         (void)agnc_session_cleanup_legacy_bg_files();
 
         char *loaded_provider = NULL;
+        char *loaded_gateway = NULL;
         char *loaded_model = NULL;
 
-        if (agnc_session_load(session_path, &conversation, &loaded_provider, &loaded_model) == AGNC_STATUS_OK) {
-            agnc_repl_apply_loaded_session_meta(&config, loaded_provider, loaded_model);
+        if (agnc_session_load(session_path, &conversation, NULL, NULL) == AGNC_STATUS_OK) {
+            if (config.sessions_restore_routing) {
+                if (agnc_session_load_routing_hint(
+                        session_path, &loaded_provider, &loaded_gateway, &loaded_model) == AGNC_STATUS_OK) {
+                    agnc_repl_apply_loaded_session_routing(
+                        &config, loaded_provider, loaded_gateway, loaded_model);
+                    loaded_provider = NULL;
+                    loaded_gateway = NULL;
+                    loaded_model = NULL;
+                }
+            }
             agnc_repl_notify_memory_window(&conversation);
         }
     }
