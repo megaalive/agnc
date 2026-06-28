@@ -15,10 +15,15 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#include <errno.h>
 #define AGNC_PATH_SEP '\\'
+#define agnc_mkdir(path, mode) _mkdir(path)
 #else
 #include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
 #define AGNC_PATH_SEP '/'
+#define agnc_mkdir(path, mode) mkdir(path, mode)
 #endif
 
 /*
@@ -133,4 +138,60 @@ int agnc_path_exists(const char *path)
 #else
     return access(path, F_OK) == 0;
 #endif
+}
+
+agnc_status_t agnc_path_ensure_dir(const char *path)
+{
+    char *copy = NULL;
+    char *cursor = NULL;
+    size_t len = 0;
+
+    if (path == NULL || path[0] == '\0') {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+#ifdef _MSC_VER
+    copy = _strdup(path);
+#else
+    copy = strdup(path);
+#endif
+    if (copy == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    len = strlen(copy);
+    while (len > 0 && (copy[len - 1] == '/' || copy[len - 1] == '\\')) {
+        copy[--len] = '\0';
+    }
+
+    for (cursor = copy; *cursor != '\0'; cursor++) {
+        if (*cursor != '/' && *cursor != '\\') {
+            continue;
+        }
+
+#ifdef _WIN32
+        if ((cursor - copy) == 2 && copy[1] == ':') {
+            continue;
+        }
+#endif
+
+        *cursor = '\0';
+        if (copy[0] != '\0' && !agnc_path_exists(copy)) {
+            if (agnc_mkdir(copy, 0755) != 0 && errno != EEXIST) {
+                free(copy);
+                return AGNC_STATUS_IO_ERROR;
+            }
+        }
+        *cursor = AGNC_PATH_SEP;
+    }
+
+    if (!agnc_path_exists(copy)) {
+        if (agnc_mkdir(copy, 0755) != 0 && errno != EEXIST) {
+            free(copy);
+            return AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    free(copy);
+    return AGNC_STATUS_OK;
 }

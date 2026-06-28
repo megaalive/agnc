@@ -19,6 +19,18 @@
 void agnc_console_init(void);
 int agnc_console_vt_enabled(void);
 
+/* Bersihkan layar (TUI atau ANSI cls). */
+void agnc_console_clear_screen(void);
+
+/* Mulai blok teks REPL di scroll region TUI. */
+void agnc_console_begin_repl_output(void);
+
+/* Akhiri blok; repaint chrome setelah output panjang selesai. */
+void agnc_console_end_repl_output(void);
+
+/* printf ke scroll region TUI (scroll up otomatis, hindari timpa footer). */
+void agnc_console_repl_printf(const char *fmt, ...);
+
 void agnc_console_format_time_hm(char *out, size_t out_cap);
 void agnc_console_format_time_hms(char *out, size_t out_cap);
 void agnc_console_print_role_header(const char *role);

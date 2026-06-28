@@ -8,6 +8,7 @@
 #include "agnc/markdown_render.h"
 
 #include "agnc/console.h"
+#include "agnc/tui.h"
 
 
 #include <ctype.h>
@@ -28,6 +29,11 @@
 
 #define MD_MAX_COLS 6
 #define MD_MAX_ROWS 48
+
+static void mr_nl(void)
+{
+    agnc_tui_chat_newline();
+}
 #define MD_CELL_MAX 384
 #define MD_LINE_MAX 1024
 
@@ -460,9 +466,27 @@ static int cell_max_line_width(const char* cell) {
     p = cell;
     while (*p) {
         const char* nl = strchr(p, '\n');
-        int len = nl ? (int)(nl - p) : (int)strlen(p);
-        if (len > max_w) max_w = len;
-        if (!nl) break;
+        char line_buf[MD_CELL_MAX];
+        int w;
+        size_t len;
+
+        if (nl) {
+            len = (size_t)(nl - p);
+        } else {
+            len = strlen(p);
+        }
+        if (len >= sizeof(line_buf)) {
+            len = sizeof(line_buf) - 1;
+        }
+        memcpy(line_buf, p, len);
+        line_buf[len] = '\0';
+        w = cell_display_width(line_buf);
+        if (w > max_w) {
+            max_w = w;
+        }
+        if (!nl) {
+            break;
+        }
         p = nl + 1;
     }
     return max_w;
@@ -515,14 +539,15 @@ static void render_vs_legend(int indent, const char* const* names, int count) {
         }
         write_inline_markdown(names[j], strlen(names[j]));
     }
-    putchar('\n');
+    mr_nl();
 }
 
 static void render_row_separator(int indent) {
     write_indent(indent);
     if (VT()) fputs(ANSI_DIM, stdout);
-    fputs("---\n", stdout);
+    fputs("---", stdout);
     if (VT()) fputs(ANSI_RESET, stdout);
+    mr_nl();
 }
 
 static int measure_label_width(const char* const* labels, int count) {
@@ -560,7 +585,7 @@ static void render_label_value_pairs(int indent, const char* const* labels, int 
                 write_indent(indent + label_w + 3);
             }
             write_inline_markdown(wrapped[r], strlen(wrapped[r]));
-            putchar('\n');
+            mr_nl();
         }
     }
 }
@@ -582,69 +607,120 @@ static void draw_table_rule(int indent, const int* col_width, int cols) {
         for (j = 0; j < col_width[c]; j++) putchar('-');
         putchar('+');
     }
-    putchar('\n');
+    mr_nl();
     if (VT()) fputs(ANSI_RESET, stdout);
+}
+
+static int column_content_width(agnc_md_table_row_t* table, int rows, int col) {
+    int max_w = 0;
+    int i;
+
+    for (i = 0; i < rows; i++) {
+        int w = cell_max_line_width(table[i][col]);
+        if (w > max_w) {
+            max_w = w;
+        }
+    }
+    return max_w;
 }
 
 static void fit_table_columns(int cols, int col_width[MD_MAX_COLS], int rows,
     agnc_md_table_row_t* table, int term_w) {
     int budget = term_w - (cols + 1);
+    int natural[MD_MAX_COLS];
+    int total_natural = 0;
     int c = 0;
-    int i = 0;
 
-    if (budget < cols * 8) budget = cols * 8;
+    if (budget < cols * 6) {
+        budget = cols * 6;
+    }
 
-    if (cols >= 3) {
-        int label_w = 0;
-        for (i = 0; i < rows; i++) {
-            int len = cell_max_line_width(table[i][0]);
-            if (len > label_w) label_w = len;
+    for (c = 0; c < cols; c++) {
+        natural[c] = column_content_width(table, rows, c) + 2;
+        if (natural[c] < 6) {
+            natural[c] = 6;
         }
-        col_width[0] = label_w + 2;
-        if (col_width[0] > 24) col_width[0] = 24;
-        if (col_width[0] < 8) col_width[0] = 8;
-        {
-            int rest = budget - col_width[0];
-            int data_cols = cols - 1;
-            int per = rest / data_cols;
-            if (per < 14) per = 14;
-            for (c = 1; c < cols; c++) col_width[c] = per;
-        }
-    } else if (cols == 2) {
-        int c0_need = 0;
-        for (i = 0; i < rows; i++) {
-            int len = cell_max_line_width(table[i][0]);
-            if (len > c0_need) c0_need = len;
-        }
-        col_width[0] = c0_need + 2;
-        if (col_width[0] > 28) col_width[0] = 28;
-        if (col_width[0] < 8) col_width[0] = 8;
-        col_width[1] = budget - col_width[0];
-        if (col_width[1] < 16) {
-            col_width[1] = 16;
-            col_width[0] = budget - 16;
-            if (col_width[0] < 8) col_width[0] = 8;
-        }
-    } else {
-        int per_col = budget / cols;
-        if (per_col < 12) per_col = 12;
+        total_natural += natural[c];
+    }
+
+    if (total_natural <= budget) {
         for (c = 0; c < cols; c++) {
-            int max_len = 0;
-            for (i = 0; i < rows; i++) {
-                int len = cell_max_line_width(table[i][c]);
-                if (len > max_len) max_len = len;
-            }
-            col_width[c] = max_len + 2;
-            if (col_width[c] > per_col) col_width[c] = per_col;
-            if (col_width[c] < 6) col_width[c] = 6;
+            col_width[c] = natural[c];
         }
+        return;
     }
 
-    while (table_border_width(col_width, cols) > term_w && col_width[cols - 1] > 8) {
-        col_width[cols - 1]--;
+    /*
+     * Tabel 3+ kolom (file | ukuran | tanggal): kolom 1..N-1 cukup lebar konten,
+     * sisa budget ke kolom 0 (nama file panjang). Hindari cap 24 char di kolom 0.
+     */
+    if (cols >= 3) {
+        int fixed = 0;
+
+        for (c = 1; c < cols; c++) {
+            col_width[c] = natural[c];
+            if (col_width[c] > budget / 3) {
+                col_width[c] = budget / 3;
+            }
+            if (col_width[c] < 8) {
+                col_width[c] = 8;
+            }
+            fixed += col_width[c];
+        }
+
+        col_width[0] = budget - fixed;
+        if (col_width[0] < 16) {
+            int deficit = 16 - col_width[0];
+            for (c = cols - 1; c >= 1 && deficit > 0; c--) {
+                int shrink = col_width[c] - 8;
+                if (shrink <= 0) {
+                    continue;
+                }
+                if (shrink > deficit) {
+                    shrink = deficit;
+                }
+                col_width[c] -= shrink;
+                deficit -= shrink;
+            }
+            col_width[0] = budget;
+            for (c = 1; c < cols; c++) {
+                col_width[0] -= col_width[c];
+            }
+            if (col_width[0] < 10) {
+                col_width[0] = 10;
+            }
+        }
+        return;
     }
-    while (table_border_width(col_width, cols) > term_w && cols > 1 && col_width[0] > 8) {
-        col_width[0]--;
+
+    if (cols == 2) {
+        col_width[0] = natural[0];
+        col_width[1] = natural[1];
+        if (col_width[0] + col_width[1] > budget) {
+            if (col_width[0] > budget / 2) {
+                col_width[0] = budget / 2;
+            }
+            col_width[1] = budget - col_width[0];
+            if (col_width[1] < 10) {
+                col_width[1] = 10;
+                col_width[0] = budget - 10;
+            }
+        }
+        return;
+    }
+
+    {
+        int scale_num = budget;
+        int scale_den = total_natural;
+        for (c = 0; c < cols; c++) {
+            col_width[c] = (natural[c] * scale_num) / scale_den;
+            if (col_width[c] < 6) {
+                col_width[c] = 6;
+            }
+        }
+        while (table_border_width(col_width, cols) > term_w && col_width[cols - 1] > 6) {
+            col_width[cols - 1]--;
+        }
     }
 }
 
@@ -680,8 +756,20 @@ static void render_grid_table(int indent, agnc_md_table_row_t* table, int rows, 
             write_indent(indent);
             putchar('|');
             for (c = 0; c < cols; c++) {
-                const char* cell_line = (r < line_counts[c]) ? wrapped[c][r] : "";
-                int pad = col_width[c] - 2 - cell_display_width(cell_line);
+                const char* cell_line = "";
+                int line_index = r;
+                int start_line = 0;
+                int pad = 0;
+
+                if (line_counts[c] < row_h) {
+                    start_line = (row_h - line_counts[c]) / 2;
+                }
+                line_index = r - start_line;
+                if (line_index >= 0 && line_index < line_counts[c]) {
+                    cell_line = wrapped[c][line_index];
+                }
+
+                pad = col_width[c] - 2 - cell_display_width(cell_line);
                 putchar(' ');
                 if (VT() && is_header) fputs(ANSI_BOLD, stdout);
                 write_inline_markdown(cell_line, strlen(cell_line));
@@ -693,7 +781,7 @@ static void render_grid_table(int indent, agnc_md_table_row_t* table, int rows, 
                 putchar(' ');
                 putchar('|');
             }
-            putchar('\n');
+            mr_nl();
         }
 
         if (i == 0 || i < rows - 1) draw_table_rule(indent, col_width, cols);
@@ -784,7 +872,7 @@ static void render_comparison_table(int indent, char table[MD_MAX_ROWS][MD_MAX_C
             if (VT() && !strstr(table[i][0], "**")) fputs(ANSI_BOLD, stdout);
             write_inline_markdown(table[i][0], strlen(table[i][0]));
             if (VT() && !strstr(table[i][0], "**")) fputs(ANSI_RESET, stdout);
-            putchar('\n');
+            mr_nl();
         }
 
         for (j = 0; j < label_count; j++) values[j] = table[i][value_start + j];
@@ -865,7 +953,7 @@ static void render_prefixed_line(const char* time_prefix, int* first_line, int p
         write_indent(continuation_indent);
     }
     write_inline_markdown(line, strlen(line));
-    putchar('\n');
+    mr_nl();
 }
 
 static void render_tree_block(const char* const* lines, int line_count, const char* time_prefix, int* first_line,
@@ -881,7 +969,7 @@ static void render_tree_block(const char* const* lines, int line_count, const ch
         if (VT()) fputs(ANSI_CODE, stdout);
         fputs(lines[i], stdout);
         if (VT()) fputs(ANSI_RESET, stdout);
-        putchar('\n');
+        mr_nl();
     }
 }
 
@@ -897,7 +985,7 @@ static void render_preformatted_block(const char* const* lines, int line_count, 
             write_indent(continuation_indent);
         }
         fputs(lines[i], stdout);
-        putchar('\n');
+        mr_nl();
     }
     if (VT()) fputs(ANSI_RESET, stdout);
 }
@@ -908,6 +996,9 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
     int paragraph_continue = 0;
 
     if (!text) return;
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_before_write();
+    }
     cursor = text;
 
     /* State machine per baris: fence, tabel, box-drawing, atau inline markdown.
@@ -986,7 +1077,7 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
             }
 
             render_table_block(block_ptrs, block_count, 0);
-            putchar('\n');
+            mr_nl();
             free(block_lines);
             paragraph_continue = 0;
             cursor = block_end;
@@ -1025,7 +1116,7 @@ void agnc_markdown_render_body(const char* text, const char* time_prefix, int co
 
         if (line[0] == '\0') {
             paragraph_continue = 0;
-            if (!first_line) putchar('\n');
+            if (!first_line) mr_nl();
         } else {
             render_prefixed_line(time_prefix, &first_line, paragraph_continue, continuation_indent, line);
             paragraph_continue = 1;

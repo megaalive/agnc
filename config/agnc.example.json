@@ -79,7 +79,8 @@
   "runtime": {
     "max_tool_iterations": 25,
     "stream": true,
-    "verbose": false
+    "verbose": false,
+    "tui": false
   },
   "paths": {
     "sessions_dir": "~/.agnc/sessions",

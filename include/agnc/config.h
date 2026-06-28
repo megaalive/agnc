@@ -33,6 +33,7 @@ typedef struct {
     int max_tool_iterations;
     int stream;
     int verbose;
+    int tui_enabled;
     int enable_tools;
     int tool_read_file;
     int tool_shell;
@@ -77,6 +78,12 @@ void agnc_config_free(agnc_config_t *config);
 agnc_status_t agnc_config_load(const char *path, agnc_config_t *config);
 
 /*
+ * Buat ~/.agnc.json + folder data jika belum ada (first-run).
+ * created_out: 1 jika file baru ditulis, 0 jika sudah ada (boleh NULL).
+ */
+agnc_status_t agnc_config_bootstrap_if_missing(const char *path, int *created_out);
+
+/*
  * Daftar kunci providers{} dari config (mis. openrouter, ollama, opencode).
  * ids_out dan setiap string dialokasikan; pemanggil memanggil agnc_config_free_provider_id_list().
  */
@@ -92,5 +99,8 @@ agnc_status_t agnc_config_load_provider_entry(const char *path, const char *prov
 
 /* Tulis teks JSON ke path dengan rename atomik; validasi JSON dulu. */
 agnc_status_t agnc_config_save_json(const char *path, const char *json_text);
+
+/* Set runtime.verbose di file config (path NULL = ~/.agnc.json). */
+agnc_status_t agnc_config_set_runtime_verbose(const char *path, int enabled);
 
 #endif

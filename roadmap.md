@@ -896,7 +896,7 @@ Urutan praktis sebelum fitur besar; jangan loncat ke sub-agent/OAuth/gRPC sebelu
 | **3. Fase 6.2 — dua fitur** | Line editing REPL + `web_fetch` | **Selesai** |
 | **4. Fase 6.3 slot kecil** | `todo_write` | **Selesai** |
 | **5. Fase 6.4 — konsol REPL** | Modul `console.c`, input Windows, permission terintegrasi | **Selesai** |
-| **6. Fitur besar** (Fase 6.17+) | Sub-agent, OAuth, gRPC, TUI | **6.17–6.22 selesai**; **6.23–6.24** backlog (§12.6) |
+| **6. Fitur besar** (Fase 6.17+) | Sub-agent, OAuth, gRPC, TUI | **6.17–6.23 selesai**; **6.24** backlog (§12.6) |
 
 **Prioritas Fase 6.2 (dikunci):** line editing REPL, lalu `web_fetch`. Item §11.7 lainnya masuk backlog 6.6+.
 
@@ -1423,26 +1423,36 @@ cmake --build --preset x64-Release
 .\out\build\x64-Release\agnc.exe serve --listen 127.0.0.1:50051
 ```
 
-Nonaktifkan gRPC: `-DAGNC_BUILD_GRPC=OFF`.
+Aktifkan gRPC: `.\scripts\build.ps1 release -Grpc` atau `-DAGNC_BUILD_GRPC=ON`.
 
-#### Fase 6.23 — TUI REPL bertahap — **backlog**
+#### Fase 6.23 — TUI REPL bertahap — **regresi di Windows (2026-06)**
 
-Tujuan: pengalaman terminal lebih kaya tanpa framework UI penuh; memanfaatkan `console.c`, `line_edit.c`, VT Windows.
+Tujuan: pengalaman terminal lebih kaya; implementasi awal memakai campuran ANSI VT + Win32 API.
 
-| Langkah | Isi | Deliverable |
+| Langkah | Isi | Status |
 | --- | --- | --- |
-| **6.23.1** | Status bar | Satu baris di bawah prompt: model, sesi, token turn terakhir, jumlah bg job |
-| **6.23.2** | Layout scroll | Area chat scrollable + input fixed (refactor redraw `console.c`) |
-| **6.23.3** | Panel tool aktivitas | Collapse/expand log tool di sisi kanan atau baris bawah (toggle `/view tools`) |
-| **6.23.4** | Panel background jobs | Visual antre + running dari `/jobs`; notifikasi selesai non-intrusif |
-| **6.23.5** | Evaluasi library | Spike 1–2 hari: notcurses vs ANSI murni; pilih yang paling kecil |
+| **6.23.1** | Status bar | Ada — regresi layout di Windows |
+| **6.23.2** | Layout scroll | Tidak stabil (DECSTBM + Win32 desync) |
+| **6.23.3** | Panel tool aktivitas | Ada — `/view tools` |
+| **6.23.4** | Panel background jobs | Ada — `/view jobs` |
+| **6.23.5** | Evaluasi library | **Ditarik** — ANSI VT murni tidak cukup di Windows |
 
-Acceptance:
+**Default:** `runtime.tui` = `false` (semua platform) sampai 6.25.
 
-- REPL 80×24 usable: input tidak tergeser saat output panjang; status bar akurat setelah `/model`, `/session`, `/bg`.
-- `/view` (atau setara) toggle panel tanpa merusak history line edit.
-- Fallback: jika terminal non-VT, perilaku sama seperti REPL saat ini.
-- Tidak ada dependency Node/React.
+Nonaktifkan TUI: `"runtime": { "tui": false }` atau terminal non-VT (fallback REPL klasik).
+
+#### Fase 6.25 — TUI v2 (notcurses) — **rencana**
+
+Keputusan 6.23.5 (tanpa library) terbukti rapuh: `printf`/DECSTBM dan `WriteConsole`/line-edit memakai dua model kursor.
+
+| Langkah | Isi |
+| --- | --- |
+| **6.25.1** | Spike notcurses (vcpkg): layout chat + input + status satu plane |
+| **6.25.2** | Backend `tui_notcurses.c`; pertahankan API `agnc_tui_*` |
+| **6.25.3** | Linux + Windows Terminal; fallback REPL lama jika init gagal |
+| **6.25.4** | Hapus DECSTBM/scroll manual dari `tui.c` |
+
+**Bukan ncurses klasik** — [notcurses](https://github.com/dankamongmen/notcurses): Unicode, Windows Console/WT, lebih cocok dari ncurses+PDCurses.
 
 Out of scope 6.23: mouse, split pane resize interaktif, tema warna penuh.
 
@@ -1452,6 +1462,7 @@ Lihat backlog 6.17.x (pool worker terbatas, permission per job-id, `/jobs cancel
 
 #### Fase 6.25+ — Kandidat lanjutan
 
+- **TUI v2 notcurses** → **6.25** (prioritas setelah stabilitas REPL)
 - Full slash catalog OpenClaude
 - Plugin system
 - MCP multi-transport (SSE/HTTP)

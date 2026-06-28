@@ -640,6 +640,141 @@ static char *agnc_opencode_collect_tool_output(yyjson_val *part)
     return NULL;
 }
 
+static char *agnc_opencode_diagnose_parts(yyjson_val *parts)
+{
+    size_t index;
+    size_t count;
+    char hint[512];
+    size_t hint_len = 0;
+    int text_ignored = 0;
+    int text_empty = 0;
+    int tool_pending = 0;
+    int tool_other = 0;
+    char tool_sample[96];
+
+    tool_sample[0] = '\0';
+
+    if (parts == NULL || !yyjson_is_arr(parts)) {
+        return agnc_strdup_local("OpenCode: respons tanpa parts");
+    }
+
+    count = yyjson_arr_size(parts);
+    if (count == 0) {
+        return agnc_strdup_local("OpenCode: parts kosong");
+    }
+
+    for (index = 0; index < count; index++) {
+        yyjson_val *part = yyjson_arr_get(parts, index);
+        yyjson_val *type_val;
+        const char *type;
+
+        if (part == NULL || !yyjson_is_obj(part)) {
+            continue;
+        }
+
+        type_val = yyjson_obj_get(part, "type");
+        if (type_val == NULL || !yyjson_is_str(type_val)) {
+            continue;
+        }
+
+        type = yyjson_get_str(type_val);
+        if (strcmp(type, "text") == 0) {
+            yyjson_val *text_val = yyjson_obj_get(part, "text");
+
+            if (agnc_opencode_part_is_ignored(part)) {
+                text_ignored++;
+            } else if (text_val == NULL || !yyjson_is_str(text_val) || yyjson_get_str(text_val)[0] == '\0') {
+                text_empty++;
+            }
+            continue;
+        }
+
+        if (strcmp(type, "tool") == 0) {
+            yyjson_val *state_val = yyjson_obj_get(part, "state");
+            yyjson_val *status_val;
+            const char *status = "unknown";
+            const char *tool_name = "tool";
+
+            if (state_val != NULL && yyjson_is_obj(state_val)) {
+                status_val = yyjson_obj_get(state_val, "status");
+                if (status_val != NULL && yyjson_is_str(status_val)) {
+                    status = yyjson_get_str(status_val);
+                }
+            }
+
+            {
+                yyjson_val *tool_val = yyjson_obj_get(part, "tool");
+
+                if (tool_val != NULL && yyjson_is_str(tool_val)) {
+                    tool_name = yyjson_get_str(tool_val);
+                }
+            }
+
+            if (strcmp(status, "completed") != 0 && strcmp(status, "error") != 0) {
+                tool_pending++;
+                if (tool_sample[0] == '\0') {
+                    snprintf(tool_sample, sizeof(tool_sample), "%s (%s)", tool_name, status);
+                }
+            } else {
+                tool_other++;
+            }
+        }
+    }
+
+    hint[0] = '\0';
+    if (tool_pending > 0) {
+        hint_len += (size_t)snprintf(
+            hint + hint_len,
+            sizeof(hint) - hint_len,
+            "tool belum selesai%s%s",
+            tool_sample[0] != '\0' ? " (" : "",
+            tool_sample[0] != '\0' ? tool_sample : "");
+        if (tool_sample[0] != '\0') {
+            hint_len += (size_t)snprintf(hint + hint_len, sizeof(hint) - hint_len, ")");
+        }
+    }
+    if (text_ignored > 0) {
+        if (hint_len > 0) {
+            hint_len += (size_t)snprintf(hint + hint_len, sizeof(hint) - hint_len, "; ");
+        }
+        hint_len += (size_t)snprintf(
+            hint + hint_len,
+            sizeof(hint) - hint_len,
+            "%d teks diabaikan OpenCode",
+            text_ignored);
+    }
+    if (text_empty > 0 && text_ignored == 0 && tool_pending == 0) {
+        if (hint_len > 0) {
+            hint_len += (size_t)snprintf(hint + hint_len, sizeof(hint) - hint_len, "; ");
+        }
+        hint_len += (size_t)snprintf(
+            hint + hint_len,
+            sizeof(hint) - hint_len,
+            "teks kosong dari model");
+    }
+    if (tool_other > 0 && tool_pending == 0 && hint_len == 0) {
+        hint_len += (size_t)snprintf(
+            hint + hint_len,
+            sizeof(hint) - hint_len,
+            "tool selesai tanpa output teks");
+    }
+
+    if (hint_len == 0) {
+        snprintf(
+            hint,
+            sizeof(hint),
+            "OpenCode mengembalikan %zu part tanpa teks tampil",
+            count);
+    } else {
+        char prefixed[560];
+
+        snprintf(prefixed, sizeof(prefixed), "OpenCode: %s", hint);
+        return agnc_strdup_local(prefixed);
+    }
+
+    return agnc_strdup_local(hint);
+}
+
 static char *agnc_opencode_collect_text_parts(yyjson_val *parts)
 {
     size_t index;
@@ -867,6 +1002,18 @@ agnc_status_t agnc_opencode_run_turn(
         response_root = yyjson_doc_get_root(response_doc);
         response_parts = yyjson_obj_get(response_root, "parts");
         assistant_text = agnc_opencode_collect_text_parts(response_parts);
+
+        if (assistant_text != NULL && assistant_text[0] == '\0') {
+            char *diagnosis = agnc_opencode_diagnose_parts(response_parts);
+
+            if (diagnosis != NULL) {
+                agnc_sse_parser_set_empty_hint(parser, diagnosis);
+                if (config->verbose) {
+                    fprintf(stderr, "agnc: opencode empty response: %s\n", diagnosis);
+                }
+                free(diagnosis);
+            }
+        }
 
         info = yyjson_obj_get(response_root, "info");
         if (info != NULL && yyjson_is_obj(info)) {

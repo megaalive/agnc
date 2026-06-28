@@ -63,11 +63,50 @@ int main(void)
         "`**File (38):**`\n"
         "- `agnc.exe`, `agnc.exp`\n";
 
+    const char *file_table =
+        "| **File** | **Ukuran** | **Tanggal** |\n"
+        "|---|---|---|\n"
+        "| `apps_portal_bak_20250_502_1146.zip` | 4.85 GB | 2 Mei 2025 |\n"
+        "| `genericx86-64-ext-6.3.14+rev1-v16.12.0.img` | 1.2 GB | 1 Jan 2025 |\n"
+        "| `HBCD_PE_x64.iso` | 890 MB | 15 Mar 2024 |\n";
+
     const char *tmp_path = "test_markdown_render.out";
 
     agnc_console_init();
 
     agnc_markdown_render_body(table_sample, NULL, 0);
+
+    if (render_to_temp_file(file_table, tmp_path) != 0) {
+        fprintf(stderr, "failed to render file table to temp file\n");
+        return 1;
+    }
+
+    if (!temp_file_contains(tmp_path, "apps_portal_bak")) {
+        fprintf(stderr, "file table missing filename\n");
+        remove(tmp_path);
+        return 1;
+    }
+
+    if (temp_file_contains(tmp_path, "4.85 GB")) {
+        FILE *f = fopen(tmp_path, "rb");
+        char buf[8192];
+        size_t n;
+        int gb_lines = 0;
+        const char *p;
+        if (f != NULL) {
+            n = fread(buf, 1, sizeof(buf) - 1, f);
+            buf[n] = '\0';
+            fclose(f);
+            for (p = buf; (p = strstr(p, "4.85 GB")) != NULL; p++) {
+                gb_lines++;
+            }
+            if (gb_lines > 2) {
+                fprintf(stderr, "size column repeated on too many lines (layout broken)\n");
+                remove(tmp_path);
+                return 1;
+            }
+        }
+    }
 
     if (render_to_temp_file(bold_headers, tmp_path) != 0) {
         fprintf(stderr, "failed to render bold headers to temp file\n");

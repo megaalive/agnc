@@ -5,6 +5,7 @@
  */
 
 #include "agnc/line_edit.h"
+#include "agnc/tui.h"
 #include "agnc/console.h"
 
 #include <stdio.h>
@@ -27,6 +28,17 @@ static agnc_repl_line_idle_needed_fn g_repl_line_idle_needed = NULL;
 static agnc_repl_line_idle_poll_fn g_repl_line_idle_poll = NULL;
 static agnc_repl_line_idle_needed_fn g_repl_line_idle_perm_needed = NULL;
 static agnc_repl_line_idle_fn g_repl_line_idle_perm_handle = NULL;
+static volatile int g_repl_line_exit_requested = 0;
+
+void agnc_repl_line_reset_exit(void)
+{
+    g_repl_line_exit_requested = 0;
+}
+
+void agnc_repl_line_signal_exit(void)
+{
+    g_repl_line_exit_requested = 1;
+}
 
 void agnc_repl_line_set_idle(
     agnc_repl_line_idle_needed_fn needed,
@@ -75,6 +87,152 @@ typedef struct {
     SHORT rows_used;
 } agnc_repl_edit_view_t;
 
+static SHORT agnc_repl_console_width(const CONSOLE_SCREEN_BUFFER_INFO *csbi)
+{
+    SHORT width;
+
+    if (csbi == NULL) {
+        return 80;
+    }
+
+    width = (SHORT)(csbi->srWindow.Right - csbi->srWindow.Left + 1);
+    if (width > 0) {
+        return width;
+    }
+
+    if (csbi->dwSize.X > 0) {
+        return csbi->dwSize.X;
+    }
+
+    return 80;
+}
+
+static SHORT agnc_repl_draft_row_count(const agnc_repl_edit_view_t *view, const char *draft, size_t length)
+{
+    SHORT rows = 1;
+    int col = (int)view->start.X;
+    size_t index;
+
+    if (length == 0) {
+        return 1;
+    }
+
+    for (index = 0; index < length; index++) {
+        if (draft[index] == '\n') {
+            rows++;
+            col = 0;
+            continue;
+        }
+        col++;
+        if (col >= view->screen_width) {
+            rows++;
+            col = 0;
+        }
+    }
+
+    return rows;
+}
+
+static COORD agnc_repl_cursor_pos(const agnc_repl_edit_view_t *view, const char *draft, size_t cursor, COORD origin)
+{
+    COORD pos;
+    size_t index;
+    int col = (int)origin.X;
+    SHORT row = origin.Y;
+
+    pos = origin;
+
+    for (index = 0; index < cursor && index < (draft != NULL ? strlen(draft) : 0); index++) {
+        if (draft[index] == '\n') {
+            row++;
+            col = (int)origin.X;
+            continue;
+        }
+        col++;
+        if (col >= view->screen_width) {
+            row++;
+            col = (int)origin.X;
+        }
+    }
+
+    if (agnc_tui_is_active() && row > view->start.Y) {
+        row = view->start.Y;
+        col = (int)origin.X;
+    }
+
+    pos.Y = row;
+    pos.X = (SHORT)col;
+    return pos;
+}
+
+static COORD agnc_repl_draft_origin(const agnc_repl_edit_view_t *view, SHORT total_rows)
+{
+    COORD origin = view->start;
+
+    if (agnc_tui_is_active() && total_rows > 1) {
+        origin.Y = (SHORT)(view->start.Y - (total_rows - 1));
+        if (origin.Y < 0) {
+            origin.Y = 0;
+        }
+    }
+
+    return origin;
+}
+
+static COORD agnc_repl_draft_origin_for(const agnc_repl_edit_view_t *view, const char *draft, size_t length)
+{
+    SHORT rows = agnc_repl_draft_row_count(view, draft, length);
+
+    if (agnc_tui_is_active() && rows > 1) {
+        SHORT max_rows = (SHORT)(view->start.Y + 1);
+        if (rows > max_rows) {
+            rows = max_rows;
+        }
+    }
+
+    return agnc_repl_draft_origin(view, rows);
+}
+
+static void agnc_repl_write_draft(const agnc_repl_edit_view_t *view, const char *draft, size_t length, COORD origin)
+{
+    COORD pos;
+    DWORD written;
+    size_t index;
+    int col = (int)origin.X;
+
+    pos = origin;
+    SetConsoleCursorPosition(view->out, pos);
+
+    for (index = 0; index < length; index++) {
+        char ch = draft[index];
+
+        if (ch == '\n') {
+            pos.Y++;
+            col = (int)origin.X;
+            pos.X = origin.X;
+            if (agnc_tui_is_active() && pos.Y > view->start.Y) {
+                break;
+            }
+            SetConsoleCursorPosition(view->out, pos);
+            continue;
+        }
+
+        WriteConsoleA(view->out, &ch, 1, &written, NULL);
+        col++;
+        if (col >= view->screen_width) {
+            pos.Y++;
+            col = (int)origin.X;
+            pos.X = origin.X;
+            if (agnc_tui_is_active() && pos.Y > view->start.Y) {
+                break;
+            }
+            SetConsoleCursorPosition(view->out, pos);
+        } else {
+            pos.X = (SHORT)col;
+        }
+    }
+}
+
 static SHORT agnc_repl_rows_for_length(SHORT start_col, size_t length, SHORT screen_width)
 {
     size_t first_row;
@@ -95,23 +253,13 @@ static SHORT agnc_repl_rows_for_length(SHORT start_col, size_t length, SHORT scr
     return (SHORT)(1 + (length - first_row + (size_t)screen_width - 1) / (size_t)screen_width);
 }
 
-static COORD agnc_repl_cursor_pos(const agnc_repl_edit_view_t *view, size_t cursor)
-{
-    COORD pos;
-    int linear;
-
-    linear = (int)view->start.X + (int)cursor;
-    pos.Y = (SHORT)(view->start.Y + linear / view->screen_width);
-    pos.X = (SHORT)(linear % view->screen_width);
-    return pos;
-}
-
-static void agnc_repl_clear_rows(const agnc_repl_edit_view_t *view, SHORT row_count)
+static void agnc_repl_clear_rows(const agnc_repl_edit_view_t *view, COORD origin, SHORT row_count)
 {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     COORD fill_pos;
     DWORD written;
     SHORT row;
+    SHORT end_y;
 
     if (row_count <= 0) {
         return;
@@ -121,10 +269,19 @@ static void agnc_repl_clear_rows(const agnc_repl_edit_view_t *view, SHORT row_co
         return;
     }
 
+    if (agnc_tui_is_active()) {
+        end_y = (SHORT)(view->start.Y + 1);
+    } else {
+        end_y = (SHORT)(origin.Y + row_count);
+        if (end_y > csbi.dwSize.Y) {
+            end_y = csbi.dwSize.Y;
+        }
+    }
+
     for (row = 0; row < row_count; row++) {
         fill_pos.X = 0;
-        fill_pos.Y = (SHORT)(view->start.Y + row);
-        if (fill_pos.Y >= csbi.dwSize.Y) {
+        fill_pos.Y = (SHORT)(origin.Y + row);
+        if (fill_pos.Y >= end_y || fill_pos.Y >= csbi.dwSize.Y) {
             break;
         }
         FillConsoleOutputCharacterA(view->out, ' ', view->screen_width, fill_pos, &written);
@@ -132,61 +289,112 @@ static void agnc_repl_clear_rows(const agnc_repl_edit_view_t *view, SHORT row_co
     }
 }
 
-static void agnc_repl_redraw(agnc_repl_edit_view_t *view, const char *draft, size_t length, size_t cursor)
-{
-    DWORD written;
-    SHORT new_rows;
-    SHORT clear_rows;
-
-    new_rows = agnc_repl_rows_for_length(view->start.X, length, view->screen_width);
-    clear_rows = view->rows_used > new_rows ? view->rows_used : new_rows;
-
-    agnc_repl_clear_rows(view, clear_rows);
-    SetConsoleCursorPosition(view->out, view->start);
-    if (length > 0) {
-        WriteConsoleA(view->out, draft, (DWORD)length, &written, NULL);
-    }
-
-    view->rows_used = new_rows;
-    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor));
-}
-
-static void agnc_repl_echo_char(agnc_repl_edit_view_t *view, char ch, size_t cursor_after)
+static void agnc_repl_paint_prompt_prefix(const agnc_repl_edit_view_t *view)
 {
     COORD pos;
+    DWORD written;
+    const char prefix[] = "> ";
+
+    if (!agnc_tui_is_active()) {
+        return;
+    }
+
+    pos.X = 0;
+    pos.Y = view->start.Y;
+    SetConsoleCursorPosition(view->out, pos);
+    WriteConsoleA(view->out, prefix, 2, &written, NULL);
+}
+
+static void agnc_repl_redraw(agnc_repl_edit_view_t *view, const char *draft, size_t length, size_t cursor)
+{
+    SHORT new_rows;
+    SHORT clear_rows;
+    COORD origin;
+
+    new_rows = agnc_repl_draft_row_count(view, draft, length);
+    if (agnc_tui_is_active() && new_rows > 1) {
+        SHORT max_rows = (SHORT)(view->start.Y + 1);
+        if (new_rows > max_rows) {
+            new_rows = max_rows;
+        }
+    }
+    clear_rows = view->rows_used > new_rows ? view->rows_used : new_rows;
+    origin = agnc_repl_draft_origin(view, new_rows);
+
+    agnc_repl_clear_rows(view, origin, clear_rows);
+    agnc_repl_paint_prompt_prefix(view);
+    agnc_repl_write_draft(view, draft, length, origin);
+
+    view->rows_used = new_rows;
+    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, draft, cursor, origin));
+}
+
+static void agnc_repl_echo_char(
+    agnc_repl_edit_view_t *view,
+    const char *draft,
+    char ch,
+    size_t cursor_after,
+    size_t length)
+{
+    COORD pos;
+    COORD origin;
     DWORD written;
 
     if (cursor_after == 0) {
         return;
     }
 
-    pos = agnc_repl_cursor_pos(view, cursor_after - 1);
+    if (agnc_tui_is_active()) {
+        agnc_repl_redraw(view, draft, length, cursor_after);
+        return;
+    }
+
+    origin = agnc_repl_draft_origin_for(view, draft, length);
+    pos = agnc_repl_cursor_pos(view, draft, cursor_after - 1, origin);
     SetConsoleCursorPosition(view->out, pos);
     WriteConsoleA(view->out, &ch, 1, &written, NULL);
-    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after));
+    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, draft, cursor_after, origin));
 }
 
-static void agnc_repl_echo_backspace_at_end(agnc_repl_edit_view_t *view, size_t cursor_after)
+static void agnc_repl_echo_backspace_at_end(
+    agnc_repl_edit_view_t *view,
+    const char *draft,
+    size_t cursor_after,
+    size_t length)
 {
-    DWORD written;
-    const char seq[3] = { '\b', ' ', '\b' };
+    (void)cursor_after;
+    (void)length;
 
-    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after + 1));
-    WriteConsoleA(view->out, seq, 3, &written, NULL);
-    SetConsoleCursorPosition(view->out, agnc_repl_cursor_pos(view, cursor_after));
+    agnc_repl_redraw(view, draft, length, cursor_after);
 }
 
 static void agnc_repl_edit_init_view(agnc_repl_edit_view_t *view, HANDLE out)
 {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
+    int tui_row = 0;
+    int tui_col = 0;
 
     memset(view, 0, sizeof(*view));
     view->out = out;
     view->rows_used = 1;
 
+    agnc_tui_get_prompt_pos(&tui_row, &tui_col);
+    if (tui_row > 0 && tui_col > 0) {
+        view->start.X = (SHORT)(tui_col - 1);
+        view->start.Y = (SHORT)(tui_row - 1);
+        if (GetConsoleScreenBufferInfo(out, &csbi)) {
+            view->screen_width = agnc_repl_console_width(&csbi);
+        } else {
+            view->screen_width = 80;
+        }
+        agnc_repl_paint_prompt_prefix(view);
+        SetConsoleCursorPosition(out, view->start);
+        return;
+    }
+
     if (GetConsoleScreenBufferInfo(out, &csbi)) {
         view->start = csbi.dwCursorPosition;
-        view->screen_width = csbi.dwSize.X;
+        view->screen_width = agnc_repl_console_width(&csbi);
         if (view->screen_width <= 0) {
             view->screen_width = 80;
         }
@@ -277,8 +485,8 @@ static size_t agnc_repl_word_right(const char *draft, size_t length, size_t curs
 
 static void agnc_repl_refresh_prompt_line(HANDLE stdout_handle, agnc_repl_edit_view_t *view)
 {
-    printf(">\n");
-    fflush(stdout);
+    (void)stdout_handle;
+    agnc_tui_show_prompt();
     agnc_repl_edit_init_view(view, stdout_handle);
 }
 
@@ -316,6 +524,11 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         INPUT_RECORD record;
         DWORD read_count;
         WORD key;
+
+        if (g_repl_line_exit_requested) {
+            agnc_console_input_end(&input_session);
+            return 0;
+        }
 
         if (g_repl_line_idle_needed != NULL && g_repl_line_idle_needed()) {
             DWORD wait = WaitForSingleObject(stdin_handle, 50);
@@ -375,7 +588,14 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         }
 
         if (key == VK_RETURN) {
-            agnc_console_input_echo_newline(&input_session);
+            if (agnc_repl_key_ctrl_pressed(&record)) {
+                agnc_repl_insert_text(&view, draft, &length, &cursor, capacity, "\n");
+                browsing = 0;
+                continue;
+            }
+            if (!agnc_tui_is_active()) {
+                agnc_console_input_echo_newline(&input_session);
+            }
             break;
         }
 
@@ -403,7 +623,7 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
                     length--;
                     cursor--;
                     draft[length] = '\0';
-                    agnc_repl_echo_backspace_at_end(&view, cursor);
+                    agnc_repl_echo_backspace_at_end(&view, draft, cursor, length);
                 } else if (cursor == length && length == 1) {
                     length = 0;
                     cursor = 0;
@@ -436,7 +656,11 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             } else if (cursor > 0) {
                 cursor--;
             }
-            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(
+                &view,
+                draft,
+                cursor,
+                agnc_repl_draft_origin_for(&view, draft, length)));
             continue;
         }
 
@@ -446,19 +670,31 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             } else if (cursor < length) {
                 cursor++;
             }
-            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(
+                &view,
+                draft,
+                cursor,
+                agnc_repl_draft_origin_for(&view, draft, length)));
             continue;
         }
 
         if (key == VK_HOME) {
             cursor = 0;
-            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(
+                &view,
+                draft,
+                cursor,
+                agnc_repl_draft_origin_for(&view, draft, length)));
             continue;
         }
 
         if (key == VK_END) {
             cursor = length;
-            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(&view, cursor));
+            SetConsoleCursorPosition(view.out, agnc_repl_cursor_pos(
+                &view,
+                draft,
+                cursor,
+                agnc_repl_draft_origin_for(&view, draft, length)));
             continue;
         }
 
@@ -494,6 +730,7 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
         }
 
         if (record.Event.KeyEvent.uChar.AsciiChar == 3) {
+            g_repl_line_exit_requested = 1;
             agnc_console_input_end(&input_session);
             return 0;
         }
@@ -506,8 +743,7 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             char ch = record.Event.KeyEvent.uChar.AsciiChar;
             SHORT rows_before;
             int append_at_end = cursor == length;
-
-            rows_before = agnc_repl_rows_for_length(view.start.X, length, view.screen_width);
+            int has_newline = strchr(draft, '\n') != NULL;
 
             if (cursor < length) {
                 memmove(draft + cursor + 1, draft + cursor, length - cursor + 1);
@@ -517,10 +753,13 @@ int agnc_repl_read_line(char *buffer, size_t capacity)
             length++;
             draft[length] = '\0';
 
-            if (append_at_end &&
-                rows_before == agnc_repl_rows_for_length(view.start.X, length, view.screen_width)) {
-                agnc_repl_echo_char(&view, ch, cursor);
-                view.rows_used = rows_before;
+            rows_before = agnc_repl_draft_row_count(&view, draft, length - 1);
+
+            if (append_at_end && !has_newline && ch != '\n' &&
+                rows_before == agnc_repl_draft_row_count(&view, draft, length) &&
+                rows_before == 1) {
+                agnc_repl_echo_char(&view, draft, ch, cursor, length);
+                view.rows_used = 1;
             } else {
                 agnc_repl_redraw(&view, draft, length, cursor);
             }

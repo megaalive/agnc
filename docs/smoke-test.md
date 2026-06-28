@@ -29,6 +29,18 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 - [ ] `/doctor` — status environment tampil
 - [ ] Setelah turn sukses — baris `token: total N` muncul jika provider mengirim usage
 
+## TUI REPL (Fase 6.23)
+
+Terminal VT 80×24+ (Windows Terminal, VS Code terminal). Nonaktifkan: `"runtime": { "tui": false }`.
+
+- [ ] `agnc` — status bar bawah: model · sesi · token · bg jobs
+- [ ] Chat panjang — scroll hanya di area atas; prompt + status tetap di bawah
+- [ ] `/model` atau turn sukses — status bar ter-update
+- [ ] `/view tools` — panel aktivitas tool; `/view off` sembunyikan
+- [ ] `/view jobs` — panel antrian/running bg jobs
+- [ ] `/bg ...` — toast non-intrusif saat job selesai (tanpa clear input line)
+- [ ] `runtime.tui: false` — REPL klasik tanpa status bar (fallback)
+
 ## Permission
 
 - [ ] Shell tanpa `--yes` — prompt `[y/N]` muncul di REPL
@@ -121,7 +133,7 @@ Checklist singkat sebelum rilis atau setelah perubahan besar. Jalankan di Window
 
 ## gRPC server (Fase 6.22)
 
-- [ ] Build dengan gRPC: `.\scripts\build.ps1 release` (atau `-DAGNC_BUILD_GRPC=OFF` untuk skip)
+- [ ] Build dengan gRPC: `.\scripts\build.ps1 release -Grpc`
 - [ ] `agnc serve --listen 127.0.0.1:50051` — bind OK
 - [ ] `grpcurl -plaintext 127.0.0.1:50051 list` — reflection (tanpa `-proto`)
 - [ ] `grpcurl ... agnc.v1.Agent/Health` — versi `0.1.0`

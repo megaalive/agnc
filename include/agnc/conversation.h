@@ -11,6 +11,7 @@
 #include "agnc/status.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Pesan dimuat ke RAM (lazy load dari SQLite). */
 #define AGNC_CONVERSATION_MEMORY_LIMIT 48
@@ -29,6 +30,9 @@ typedef struct {
     char *tool_call_id;
     char *tool_name;
     char *tool_arguments;
+    int64_t parent_id; /* 0 = NULL di SQLite */
+    int is_bg;
+    int job_id; /* 0 = NULL di SQLite */
 } agnc_conversation_message_t;
 
 typedef struct {
@@ -79,5 +83,8 @@ size_t agnc_conversation_llm_start_index(const agnc_conversation_t *conversation
 
 /* 1 jika perlu sisipkan pesan ringkasan riwayat sebelum tail. */
 int agnc_conversation_llm_needs_summary(const agnc_conversation_t *conversation);
+
+/* Tandai suffix unsynced dengan metadata bg sebelum agnc_session_sync. */
+void agnc_conversation_mark_unsynced_bg(agnc_conversation_t *conversation, int job_id);
 
 #endif /* AGNC_CONVERSATION_H */

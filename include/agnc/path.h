@@ -29,4 +29,9 @@ agnc_status_t agnc_path_default_config(char **output);
  */
 int agnc_path_exists(const char *path);
 
+/*
+ * Buat direktori (dan induknya jika belum ada). Idempotent jika sudah ada.
+ */
+agnc_status_t agnc_path_ensure_dir(const char *path);
+
 #endif

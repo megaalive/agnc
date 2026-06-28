@@ -28,6 +28,7 @@ typedef struct {
     char *last_content_chunk;
     char *last_reasoning_chunk;
     char *last_error;
+    char *empty_hint;
     agnc_sse_tool_call_t tool_calls[AGNC_SSE_MAX_TOOL_CALLS];
     size_t tool_call_count;
     int has_tool_calls;
@@ -73,6 +74,8 @@ int agnc_sse_parser_has_tool_calls(const agnc_sse_parser_t *parser);
 size_t agnc_sse_parser_get_tool_call_count(const agnc_sse_parser_t *parser);
 const agnc_sse_tool_call_t *agnc_sse_parser_get_tool_call(const agnc_sse_parser_t *parser, size_t index);
 int agnc_sse_parser_printed_any(const agnc_sse_parser_t *parser);
+const char *agnc_sse_parser_get_empty_hint(const agnc_sse_parser_t *parser);
+void agnc_sse_parser_set_empty_hint(agnc_sse_parser_t *parser, const char *hint);
 
 int agnc_sse_parser_has_usage(const agnc_sse_parser_t *parser);
 long agnc_sse_parser_get_prompt_tokens(const agnc_sse_parser_t *parser);

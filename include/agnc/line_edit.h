@@ -9,8 +9,11 @@
 
 #include <stddef.h>
 
-/* Baca satu baris dari stdin; mengembalikan 0 jika EOF, 1 jika OK. */
+/* Baca satu baris dari stdin; mengembalikan 0 jika EOF atau Ctrl+C (keluar REPL). */
 int agnc_repl_read_line(char *buffer, size_t capacity);
+
+void agnc_repl_line_reset_exit(void);
+void agnc_repl_line_signal_exit(void);
 
 typedef void (*agnc_repl_line_idle_fn)(void);
 typedef int (*agnc_repl_line_idle_poll_fn)(void);

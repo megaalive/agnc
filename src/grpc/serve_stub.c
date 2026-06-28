@@ -9,6 +9,6 @@
 int agnc_cli_run_serve(const char *listen_address)
 {
     (void)listen_address;
-    fprintf(stderr, "agnc: subcommand serve membutuhkan build gRPC (default ON; rebuild tanpa -DAGNC_BUILD_GRPC=OFF)\n");
+    fprintf(stderr, "agnc: subcommand serve membutuhkan build gRPC (rebuild: .\\scripts\\build.ps1 release -Grpc)\n");
     return 1;
 }

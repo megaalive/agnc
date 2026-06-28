@@ -176,6 +176,9 @@ agnc_status_t agnc_conversation_push_hydrated(
     message->tool_call_id = tool_call_id != NULL ? agnc_strdup_local(tool_call_id) : NULL;
     message->tool_name = tool_name != NULL ? agnc_strdup_local(tool_name) : NULL;
     message->tool_arguments = tool_arguments != NULL ? agnc_strdup_local(tool_arguments) : NULL;
+    message->parent_id = 0;
+    message->is_bg = 0;
+    message->job_id = 0;
 
     if (message->role == NULL) {
         conversation->count--;
@@ -183,6 +186,22 @@ agnc_status_t agnc_conversation_push_hydrated(
     }
 
     return AGNC_STATUS_OK;
+}
+
+void agnc_conversation_mark_unsynced_bg(agnc_conversation_t *conversation, int job_id)
+{
+    size_t index;
+    size_t start;
+
+    if (conversation == NULL || conversation->unsynced_count == 0) {
+        return;
+    }
+
+    start = conversation->count - conversation->unsynced_count;
+    for (index = start; index < conversation->count; index++) {
+        conversation->items[index].is_bg = 1;
+        conversation->items[index].job_id = job_id;
+    }
 }
 
 agnc_status_t agnc_conversation_ensure_system(agnc_conversation_t *conversation, const char *system_prompt)

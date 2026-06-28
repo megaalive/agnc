@@ -1057,6 +1057,7 @@ void agnc_config_init(agnc_config_t *config)
     config->tool_sub_agent = 1;
     config->skills_enabled = 1;
     config->hooks_enabled = 0;
+    config->tui_enabled = 0;
     config->ask_shell_permission = 1;
     config->ask_write_permission = 1;
     config->ask_mcp_permission = 1;
@@ -1084,6 +1085,145 @@ void agnc_config_free(agnc_config_t *config)
     config->gateway_id = NULL;
 }
 
+static const char AGNC_CONFIG_BOOTSTRAP_JSON[] =
+    "{\n"
+    "  \"schema_version\": 1,\n"
+    "  \"provider\": {\n"
+    "    \"active\": \"ollama\"\n"
+    "  },\n"
+    "  \"providers\": {\n"
+    "    \"ollama\": {\n"
+    "      \"gateway\": \"ollama\",\n"
+    "      \"base_url\": \"http://127.0.0.1:11434/v1\",\n"
+    "      \"default_model\": \"qwen2.5-coder:7b\"\n"
+    "    },\n"
+    "    \"openrouter\": {\n"
+    "      \"gateway\": \"openrouter\",\n"
+    "      \"base_url\": \"https://openrouter.ai/api/v1\",\n"
+    "      \"api_key_env\": \"AGNC_API_KEY\",\n"
+    "      \"default_model\": \"openrouter/owl-alpha\"\n"
+    "    }\n"
+    "  },\n"
+    "  \"permissions\": {\n"
+    "    \"mode\": \"default\",\n"
+    "    \"always_allow\": [],\n"
+    "    \"always_deny\": [],\n"
+    "    \"always_ask\": [\"shell\", \"write_file\", \"edit_file\", \"mcp\", \"web_fetch\"]\n"
+    "  },\n"
+    "  \"mcp\": {\n"
+    "    \"servers\": []\n"
+    "  },\n"
+    "  \"tools\": {\n"
+    "    \"enabled\": [\n"
+    "      \"shell\", \"read_file\", \"write_file\", \"edit_file\", \"grep\", \"glob\",\n"
+    "      \"find_symbol\", \"web_fetch\", \"todo_write\", \"sub_agent\"\n"
+    "    ]\n"
+    "  },\n"
+    "  \"skills\": {\n"
+    "    \"enabled\": true,\n"
+    "    \"paths\": [\"~/.agnc/skills\", \".agnc/skills\"]\n"
+    "  },\n"
+    "  \"hooks\": {\n"
+    "    \"enabled\": false,\n"
+    "    \"session_start\": [],\n"
+    "    \"pre_turn\": [],\n"
+    "    \"post_turn\": [],\n"
+    "    \"pre_tool\": [],\n"
+    "    \"post_tool\": []\n"
+    "  },\n"
+    "  \"runtime\": {\n"
+    "    \"max_tool_iterations\": 25,\n"
+    "    \"stream\": true,\n"
+    "    \"verbose\": false,\n"
+    "    \"tui\": false\n"
+    "  },\n"
+    "  \"paths\": {\n"
+    "    \"sessions_dir\": \"~/.agnc/sessions\",\n"
+    "    \"cache_dir\": \"~/.agnc/cache\"\n"
+    "  }\n"
+    "}\n";
+
+static agnc_status_t agnc_config_bootstrap_dirs(void)
+{
+    char *sessions = NULL;
+    char *cache = NULL;
+    char *skills = NULL;
+    agnc_status_t status;
+
+    status = agnc_path_expand_user("~/.agnc/sessions", &sessions);
+    if (status != AGNC_STATUS_OK) {
+        free(sessions);
+        return status;
+    }
+
+    status = agnc_path_expand_user("~/.agnc/cache", &cache);
+    if (status != AGNC_STATUS_OK) {
+        free(sessions);
+        free(cache);
+        return status;
+    }
+
+    status = agnc_path_expand_user("~/.agnc/skills", &skills);
+    if (status != AGNC_STATUS_OK) {
+        free(sessions);
+        free(cache);
+        free(skills);
+        return status;
+    }
+
+    if (agnc_path_ensure_dir(sessions) != AGNC_STATUS_OK ||
+        agnc_path_ensure_dir(cache) != AGNC_STATUS_OK ||
+        agnc_path_ensure_dir(skills) != AGNC_STATUS_OK) {
+        free(sessions);
+        free(cache);
+        free(skills);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    free(sessions);
+    free(cache);
+    free(skills);
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_config_bootstrap_if_missing(const char *path, int *created_out)
+{
+    char *default_path = NULL;
+    const char *bootstrap_path = path;
+    agnc_status_t status;
+
+    if (created_out != NULL) {
+        *created_out = 0;
+    }
+
+    if (bootstrap_path == NULL) {
+        status = agnc_path_default_config(&default_path);
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+        bootstrap_path = default_path;
+    }
+
+    if (agnc_path_exists(bootstrap_path)) {
+        free(default_path);
+        return AGNC_STATUS_OK;
+    }
+
+    status = agnc_config_bootstrap_dirs();
+    if (status != AGNC_STATUS_OK) {
+        free(default_path);
+        return status;
+    }
+
+    status = agnc_config_save_json(bootstrap_path, AGNC_CONFIG_BOOTSTRAP_JSON);
+    if (status == AGNC_STATUS_OK && created_out != NULL) {
+        *created_out = 1;
+    }
+
+    free(default_path);
+    return status;
+}
+
 agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
 {
     char *default_path = NULL;
@@ -1094,6 +1234,7 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
     yyjson_val *runtime;
     yyjson_val *value;
     agnc_status_t status = AGNC_STATUS_OK;
+    int bootstrapped = 0;
 
     if (config == NULL) {
         return AGNC_STATUS_INVALID_ARGUMENT;
@@ -1108,6 +1249,20 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
             return status;
         }
         load_path = default_path;
+    }
+
+    status = agnc_config_bootstrap_if_missing(load_path, &bootstrapped);
+    if (status != AGNC_STATUS_OK) {
+        free(default_path);
+        return status;
+    }
+
+    if (bootstrapped) {
+        fprintf(
+            stderr,
+            "agnc: config baru dibuat di %s (provider default: ollama)\n"
+            "agnc: edit API key/provider di file itu, lalu jalankan `agnc doctor`\n",
+            load_path);
     }
 
     json_text = agnc_config_read_file(load_path);
@@ -1147,6 +1302,11 @@ agnc_status_t agnc_config_load(const char *path, agnc_config_t *config)
         value = yyjson_obj_get(runtime, "verbose");
         if (value != NULL && yyjson_is_bool(value)) {
             config->verbose = yyjson_get_bool(value) ? 1 : 0;
+        }
+
+        value = yyjson_obj_get(runtime, "tui");
+        if (value != NULL && yyjson_is_bool(value)) {
+            config->tui_enabled = yyjson_get_bool(value) ? 1 : 0;
         }
     }
 
@@ -1391,5 +1551,63 @@ agnc_status_t agnc_config_save_json(const char *path, const char *json_text)
     length = strlen(json_text);
     status = agnc_atomic_write_file(save_path, json_text, length);
     free(default_path);
+    return status;
+}
+
+agnc_status_t agnc_config_set_runtime_verbose(const char *path, int enabled)
+{
+    yyjson_doc *doc = NULL;
+    yyjson_val *root = NULL;
+    yyjson_mut_doc *mut_doc = NULL;
+    yyjson_mut_val *mut_root;
+    yyjson_mut_val *runtime;
+    char *json_text = NULL;
+    agnc_status_t status;
+
+    status = agnc_config_read_root(path, &doc, &root);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    mut_doc = yyjson_mut_doc_new(NULL);
+    if (mut_doc == NULL) {
+        yyjson_doc_free(doc);
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    mut_root = yyjson_val_mut_copy(mut_doc, root);
+    yyjson_doc_free(doc);
+    if (mut_root == NULL) {
+        yyjson_mut_doc_free(mut_doc);
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+    yyjson_mut_doc_set_root(mut_doc, mut_root);
+
+    runtime = yyjson_mut_obj_get(mut_root, "runtime");
+    if (runtime == NULL || !yyjson_mut_is_obj(runtime)) {
+        runtime = yyjson_mut_obj(mut_doc);
+        if (runtime == NULL) {
+            yyjson_mut_doc_free(mut_doc);
+            return AGNC_STATUS_OUT_OF_MEMORY;
+        }
+        yyjson_mut_obj_add_val(mut_doc, mut_root, "runtime", runtime);
+    }
+
+    if (yyjson_mut_obj_get(runtime, "verbose") != NULL) {
+        yyjson_mut_obj_remove_key(runtime, "verbose");
+    }
+    if (!yyjson_mut_obj_add_bool(mut_doc, runtime, "verbose", enabled ? true : false)) {
+        yyjson_mut_doc_free(mut_doc);
+        return AGNC_STATUS_JSON_ERROR;
+    }
+
+    json_text = yyjson_mut_write(mut_doc, YYJSON_WRITE_PRETTY, NULL);
+    yyjson_mut_doc_free(mut_doc);
+    if (json_text == NULL) {
+        return AGNC_STATUS_OUT_OF_MEMORY;
+    }
+
+    status = agnc_config_save_json(path, json_text);
+    free(json_text);
     return status;
 }

@@ -7,10 +7,13 @@
 
 #include "agnc/console.h"
 #include "agnc/markdown_render.h"
+#include "agnc/tui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdarg.h>
 
 #define ANSI_RESET AGNC_ANSI_RESET
 #define ANSI_DIM AGNC_ANSI_DIM
@@ -22,6 +25,18 @@
 #endif
 
 static int g_console_vt_enabled = 0;
+
+static void agnc_console_chat_puts(const char *text)
+{
+    if (text == NULL) {
+        return;
+    }
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_write(text);
+    } else {
+        fputs(text, stdout);
+    }
+}
 
 static void agnc_console_enable_vt(void)
 {
@@ -54,6 +69,72 @@ void agnc_console_init(void)
 int agnc_console_vt_enabled(void)
 {
     return g_console_vt_enabled;
+}
+
+void agnc_console_clear_screen(void)
+{
+    if (agnc_tui_is_active()) {
+        agnc_tui_clear_screen();
+        return;
+    }
+
+    if (g_console_vt_enabled) {
+        printf("\033[2J\033[H\033[3J");
+        fflush(stdout);
+        return;
+    }
+
+#ifdef _WIN32
+    (void)system("cls");
+#endif
+}
+
+void agnc_console_begin_repl_output(void)
+{
+    agnc_tui_begin_scroll_output();
+}
+
+void agnc_console_end_repl_output(void)
+{
+    fflush(stdout);
+    agnc_tui_end_scroll_output();
+}
+
+void agnc_console_repl_printf(const char *fmt, ...)
+{
+    va_list args;
+    char buffer[4096];
+    char *line;
+    char *next;
+
+    if (fmt == NULL) {
+        return;
+    }
+
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    line = buffer;
+    while (line != NULL && *line != '\0') {
+        next = strchr(line, '\n');
+        if (next != NULL) {
+            *next = '\0';
+        }
+
+        if (agnc_tui_scroll_locked()) {
+            agnc_tui_chat_before_write();
+        }
+        agnc_console_chat_puts(line);
+
+        if (next != NULL) {
+            agnc_tui_chat_newline();
+            line = next + 1;
+        } else {
+            break;
+        }
+    }
+    fflush(stdout);
 }
 
 void agnc_console_format_time_hm(char *out, size_t out_cap)
@@ -124,11 +205,17 @@ void agnc_console_print_assistant_body(const char *text)
 
     /* Mode --print headless: tanpa prefix waktu/role, hanya body terformat. */
     agnc_markdown_render_body(text, NULL, 0);
+    agnc_tui_end_chat_output();
     fflush(stdout);
 }
 
 void agnc_console_clear_input_line(void)
 {
+    if (agnc_tui_is_active()) {
+        agnc_tui_clear_input_row();
+        return;
+    }
+
     if (agnc_console_vt_enabled()) {
         /* Kursor setelah fgets ada di baris baru; naik satu baris lalu hapus input mentah. */
         fputs("\033[1A\033[2K\r", stdout);
@@ -143,31 +230,58 @@ static void agnc_console_print_chat_timestamp_line(void)
     char time_buf[16];
 
     agnc_console_format_time_hms(time_buf, sizeof(time_buf));
-    if (agnc_console_vt_enabled()) {
-        printf(ANSI_DIM "%s" ANSI_RESET "\n", time_buf);
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_before_write();
+        if (agnc_console_vt_enabled()) {
+            printf(ANSI_DIM "%s" ANSI_RESET, time_buf);
+        } else {
+            printf("%s", time_buf);
+        }
+        agnc_tui_chat_flush_stdio();
+    } else if (agnc_console_vt_enabled()) {
+        printf(ANSI_DIM "%s" ANSI_RESET, time_buf);
+        fflush(stdout);
     } else {
-        printf("%s\n", time_buf);
+        printf("%s", time_buf);
+        fflush(stdout);
     }
-    fflush(stdout);
+    agnc_tui_chat_newline();
 }
 
 void agnc_console_print_chat_user(const char *text)
 {
+    agnc_tui_begin_chat_output();
     agnc_console_print_chat_timestamp_line();
     if (text == NULL || text[0] == '\0') {
         return;
     }
 
-    if (agnc_console_vt_enabled()) {
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_before_write();
+        if (agnc_console_vt_enabled()) {
+            printf(ANSI_USER "%s" ANSI_RESET, text);
+        } else {
+            printf("%s", text);
+        }
+        agnc_tui_chat_flush_stdio();
+    } else if (agnc_console_vt_enabled()) {
         printf(ANSI_USER "%s" ANSI_RESET "\n", text);
+        fflush(stdout);
+        agnc_tui_end_chat_output();
+        return;
     } else {
         printf("%s\n", text);
+        fflush(stdout);
+        agnc_tui_end_chat_output();
+        return;
     }
-    fflush(stdout);
+    agnc_tui_chat_newline();
+    agnc_tui_end_chat_output();
 }
 
 void agnc_console_print_chat_assistant_begin(void)
 {
+    agnc_tui_begin_chat_output();
     agnc_console_print_chat_timestamp_line();
 }
 
@@ -177,13 +291,30 @@ void agnc_console_print_chat_system(const char *text)
         return;
     }
 
+    agnc_tui_begin_chat_output();
+
     agnc_console_print_chat_timestamp_line();
-    if (agnc_console_vt_enabled()) {
+    if (agnc_tui_scroll_locked()) {
+        agnc_tui_chat_before_write();
+        if (agnc_console_vt_enabled()) {
+            printf(ANSI_DIM "agnc" ANSI_RESET " · %s", text);
+        } else {
+            printf("agnc · %s", text);
+        }
+        agnc_tui_chat_flush_stdio();
+    } else if (agnc_console_vt_enabled()) {
         printf(ANSI_DIM "agnc" ANSI_RESET " · %s\n", text);
+        fflush(stdout);
+        agnc_tui_end_chat_output();
+        return;
     } else {
         printf("agnc · %s\n", text);
+        fflush(stdout);
+        agnc_tui_end_chat_output();
+        return;
     }
-    fflush(stdout);
+    agnc_tui_chat_newline();
+    agnc_tui_end_chat_output();
 }
 
 void agnc_console_print_permission_prompt(const char *label, const char *detail)
@@ -479,6 +610,10 @@ void agnc_console_print_chat_tool(const char *text)
     }
 
     agnc_console_spinner_stop();
+    agnc_tui_tool_log(text);
+    if (agnc_tui_is_active()) {
+        return;
+    }
     if (agnc_console_vt_enabled()) {
         printf(ANSI_DIM "agnc" ANSI_RESET " · %s\n", text);
     } else {
@@ -490,7 +625,21 @@ void agnc_console_print_chat_tool(const char *text)
 #ifdef _WIN32
 
 static volatile int g_spinner_active = 0;
+static volatile int g_spinner_line_started = 0;
 static HANDLE g_spinner_thread = NULL;
+
+static void agnc_console_spinner_write_line(const char *frame)
+{
+    if (agnc_console_vt_enabled()) {
+        fprintf(
+            stdout,
+            "\r" ANSI_DIM "agnc" ANSI_RESET " · %s menunggu respons…   ",
+            frame != NULL ? frame : "");
+    } else {
+        fprintf(stdout, "\ragnc · %s menunggu respons…   ", frame != NULL ? frame : "");
+    }
+    fflush(stdout);
+}
 
 static DWORD WINAPI agnc_console_spinner_thread(LPVOID unused)
 {
@@ -500,14 +649,13 @@ static DWORD WINAPI agnc_console_spinner_thread(LPVOID unused)
     (void)unused;
 
     while (g_spinner_active) {
-        if (agnc_console_vt_enabled()) {
-            fprintf(stdout, "\r\033[2K" ANSI_DIM "%s menunggu respons…" ANSI_RESET, frames[index % 4]);
+        if (agnc_tui_is_active()) {
+            agnc_tui_spinner_tick();
         } else {
-            fprintf(stdout, "\rmenunggu respons… %c   ", frames[index % 4][0]);
+            agnc_console_spinner_write_line(frames[index % 4]);
         }
-        fflush(stdout);
         index++;
-        Sleep(100);
+        Sleep(200);
     }
 
     return 0;
@@ -520,6 +668,12 @@ void agnc_console_spinner_start(void)
     }
 
     g_spinner_active = 1;
+    if (agnc_tui_is_active()) {
+        agnc_tui_set_spinner(1);
+    } else {
+        agnc_console_spinner_write_line("");
+        g_spinner_line_started = 1;
+    }
     g_spinner_thread = CreateThread(NULL, 0, agnc_console_spinner_thread, NULL, 0, NULL);
 }
 
@@ -536,32 +690,64 @@ void agnc_console_spinner_stop(void)
         g_spinner_thread = NULL;
     }
 
-    if (agnc_console_vt_enabled()) {
-        fputs("\r\033[2K\n", stdout);
-    } else {
-        fputs("\r                    \r\n", stdout);
+    if (agnc_tui_is_active()) {
+        agnc_tui_set_spinner(0);
+        return;
+    }
+
+    if (g_spinner_line_started) {
+        if (agnc_console_vt_enabled()) {
+            fputs("\r\033[2K", stdout);
+        } else {
+            fputs("\r                              \r", stdout);
+        }
+        g_spinner_line_started = 0;
     }
     fflush(stdout);
 }
 
 #else
 
-void agnc_console_spinner_start(void)
+static volatile int g_spinner_line_started = 0;
+
+static void agnc_console_spinner_write_line(const char *frame)
 {
     if (agnc_console_vt_enabled()) {
-        fputs(ANSI_DIM "menunggu respons…" ANSI_RESET "\n", stdout);
+        fprintf(
+            stdout,
+            "\r" ANSI_DIM "agnc" ANSI_RESET " · %s menunggu respons…   ",
+            frame != NULL ? frame : "");
     } else {
-        fputs("menunggu respons…\n", stdout);
+        fprintf(stdout, "\ragnc · %s menunggu respons…   ", frame != NULL ? frame : "");
     }
     fflush(stdout);
 }
 
+void agnc_console_spinner_start(void)
+{
+    if (agnc_tui_is_active()) {
+        agnc_tui_set_spinner(1);
+        return;
+    }
+
+    agnc_console_spinner_write_line("");
+    g_spinner_line_started = 1;
+}
+
 void agnc_console_spinner_stop(void)
 {
-    if (agnc_console_vt_enabled()) {
-        fputs("\033[1A\033[2K\r", stdout);
-    } else {
-        fputs("\n", stdout);
+    if (agnc_tui_is_active()) {
+        agnc_tui_set_spinner(0);
+        return;
+    }
+
+    if (g_spinner_line_started) {
+        if (agnc_console_vt_enabled()) {
+            fputs("\r\033[2K", stdout);
+        } else {
+            fputs("\r                              \r", stdout);
+        }
+        g_spinner_line_started = 0;
     }
     fflush(stdout);
 }

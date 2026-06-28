@@ -35,7 +35,6 @@
 #define AGNC_SESSION_LEGACY_EXT ".json"
 
 #define AGNC_SESSION_SCHEMA \
-    "PRAGMA journal_mode=DELETE;" \
     "CREATE TABLE IF NOT EXISTS meta (" \
     "  key TEXT PRIMARY KEY NOT NULL," \
     "  value TEXT" \
@@ -46,7 +45,20 @@
     "  content TEXT," \
     "  tool_call_id TEXT," \
     "  tool_name TEXT," \
-    "  tool_arguments TEXT" \
+    "  tool_arguments TEXT," \
+    "  parent_id INTEGER," \
+    "  is_bg INTEGER NOT NULL DEFAULT 0," \
+    "  job_id INTEGER" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS bg_jobs (" \
+    "  id INTEGER PRIMARY KEY," \
+    "  status TEXT NOT NULL," \
+    "  prompt TEXT NOT NULL," \
+    "  context_parent_id INTEGER," \
+    "  summary TEXT," \
+    "  error TEXT," \
+    "  created_at TEXT NOT NULL," \
+    "  finished_at TEXT" \
     ");"
 
 static char *agnc_strdup_local(const char *value)
@@ -184,6 +196,150 @@ agnc_status_t agnc_session_cleanup_stale_temp_files(void)
     }
 
     status = agnc_session_cleanup_stale_temp_files_in_dir(dir);
+    free(dir);
+    return status;
+}
+
+static int agnc_session_is_legacy_bg_session_name(const char *name)
+{
+    const char *digits;
+
+    if (name == NULL || strncmp(name, "bg-", 3) != 0) {
+        return 0;
+    }
+
+    digits = name + 3;
+    if (*digits == '\0') {
+        return 0;
+    }
+
+    while (*digits != '\0') {
+        if (*digits < '0' || *digits > '9') {
+            return 0;
+        }
+        digits++;
+    }
+
+    return 1;
+}
+
+agnc_status_t agnc_session_cleanup_legacy_bg_files_in_dir(const char *sessions_dir)
+{
+    if (sessions_dir == NULL || sessions_dir[0] == '\0') {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (!agnc_path_exists(sessions_dir)) {
+        return AGNC_STATUS_OK;
+    }
+
+#ifdef _WIN32
+    {
+        char pattern[1024];
+        WIN32_FIND_DATAA data;
+        HANDLE handle;
+
+        snprintf(pattern, sizeof(pattern), "%s\\bg-*.sqlite", sessions_dir);
+        handle = FindFirstFileA(pattern, &data);
+        if (handle == INVALID_HANDLE_VALUE) {
+            return AGNC_STATUS_OK;
+        }
+
+        do {
+            const char *dot;
+            size_t base_len;
+            char session_name[AGNC_SESSION_NAME_MAX + 1];
+            char full_path[1024];
+
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                continue;
+            }
+
+            dot = strrchr(data.cFileName, '.');
+            if (dot == NULL || strcmp(dot, AGNC_SESSION_FILE_EXT) != 0) {
+                continue;
+            }
+
+            base_len = (size_t)(dot - data.cFileName);
+            if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
+                continue;
+            }
+
+            memcpy(session_name, data.cFileName, base_len);
+            session_name[base_len] = '\0';
+            if (!agnc_session_is_legacy_bg_session_name(session_name)) {
+                continue;
+            }
+
+            snprintf(full_path, sizeof(full_path), "%s\\%s", sessions_dir, data.cFileName);
+            (void)remove(full_path);
+
+            snprintf(full_path, sizeof(full_path), "%s\\%s.json", sessions_dir, session_name);
+            (void)remove(full_path);
+        } while (FindNextFileA(handle, &data));
+
+        FindClose(handle);
+    }
+#else
+    {
+        DIR *dir = opendir(sessions_dir);
+
+        if (dir == NULL) {
+            return AGNC_STATUS_OK;
+        }
+
+        for (;;) {
+            struct dirent *entry = readdir(dir);
+            const char *dot;
+            size_t base_len;
+            char session_name[AGNC_SESSION_NAME_MAX + 1];
+            char full_path[1024];
+
+            if (entry == NULL) {
+                break;
+            }
+
+            dot = strrchr(entry->d_name, '.');
+            if (dot == NULL || strcmp(dot, AGNC_SESSION_FILE_EXT) != 0) {
+                continue;
+            }
+
+            base_len = (size_t)(dot - entry->d_name);
+            if (base_len == 0 || base_len > AGNC_SESSION_NAME_MAX) {
+                continue;
+            }
+
+            memcpy(session_name, entry->d_name, base_len);
+            session_name[base_len] = '\0';
+            if (!agnc_session_is_legacy_bg_session_name(session_name)) {
+                continue;
+            }
+
+            snprintf(full_path, sizeof(full_path), "%s/%s", sessions_dir, entry->d_name);
+            (void)remove(full_path);
+
+            snprintf(full_path, sizeof(full_path), "%s/%s.json", sessions_dir, session_name);
+            (void)remove(full_path);
+        }
+
+        closedir(dir);
+    }
+#endif
+
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_cleanup_legacy_bg_files(void)
+{
+    char *dir = NULL;
+    agnc_status_t status;
+
+    status = agnc_session_default_dir(&dir);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    status = agnc_session_cleanup_legacy_bg_files_in_dir(dir);
     free(dir);
     return status;
 }
@@ -569,6 +725,131 @@ static agnc_status_t agnc_session_sqlite_exec_simple(sqlite3 *db, const char *sq
     return AGNC_STATUS_OK;
 }
 
+static int agnc_session_sqlite_table_has_column(sqlite3 *db, const char *table, const char *column)
+{
+    sqlite3_stmt *stmt = NULL;
+    int rc;
+    int found = 0;
+
+    if (db == NULL || table == NULL || column == NULL) {
+        return 0;
+    }
+
+    rc = sqlite3_prepare_v2(db, "PRAGMA table_info(messages)", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return 0;
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const char *name = (const char *)sqlite3_column_text(stmt, 1);
+        if (name != NULL && strcmp(name, column) == 0) {
+            found = 1;
+            break;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    (void)table;
+    return found;
+}
+
+static agnc_status_t agnc_session_sqlite_apply_runtime_pragmas(sqlite3 *db)
+{
+    agnc_status_t status;
+
+    status = agnc_session_sqlite_exec_simple(db, "PRAGMA journal_mode=WAL");
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    return agnc_session_sqlite_exec_simple(db, "PRAGMA busy_timeout=5000");
+}
+
+static agnc_status_t agnc_session_sqlite_migrate(sqlite3 *db)
+{
+    agnc_status_t status;
+
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "parent_id")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN parent_id INTEGER");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "is_bg")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN is_bg INTEGER NOT NULL DEFAULT 0");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+    if (!agnc_session_sqlite_table_has_column(db, "messages", "job_id")) {
+        status = agnc_session_sqlite_exec_simple(db, "ALTER TABLE messages ADD COLUMN job_id INTEGER");
+        if (status != AGNC_STATUS_OK) {
+            return status;
+        }
+    }
+
+    status = agnc_session_sqlite_exec_simple(
+        db,
+        "CREATE TABLE IF NOT EXISTS bg_jobs ("
+        "  id INTEGER PRIMARY KEY,"
+        "  status TEXT NOT NULL,"
+        "  prompt TEXT NOT NULL,"
+        "  context_parent_id INTEGER,"
+        "  summary TEXT,"
+        "  error TEXT,"
+        "  created_at TEXT NOT NULL,"
+        "  finished_at TEXT"
+        ")");
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    status = agnc_session_sqlite_exec_simple(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_messages_job ON messages(job_id) WHERE job_id IS NOT NULL");
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    status = agnc_session_sqlite_exec_simple(
+        db,
+        "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id) WHERE parent_id IS NOT NULL");
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    return agnc_session_sqlite_exec_simple(
+        db,
+        "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', '2')");
+}
+
+static agnc_status_t agnc_session_sqlite_prepare(sqlite3 *db)
+{
+    agnc_status_t status;
+
+    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    status = agnc_session_sqlite_migrate(db);
+    if (status != AGNC_STATUS_OK) {
+        return status;
+    }
+
+    return agnc_session_sqlite_apply_runtime_pragmas(db);
+}
+
+static agnc_status_t agnc_session_sqlite_bind_int64_or_null(sqlite3_stmt *stmt, int index, int64_t value)
+{
+    if (value != 0) {
+        return sqlite3_bind_int64(stmt, index, (sqlite3_int64)value) == SQLITE_OK ? AGNC_STATUS_OK
+                                                                                  : AGNC_STATUS_IO_ERROR;
+    }
+
+    return sqlite3_bind_null(stmt, index) == SQLITE_OK ? AGNC_STATUS_OK : AGNC_STATUS_IO_ERROR;
+}
+
 static agnc_status_t agnc_session_sqlite_bind_text_or_null(sqlite3_stmt *stmt, int index, const char *value)
 {
     if (value != NULL) {
@@ -768,7 +1049,7 @@ static agnc_status_t agnc_session_write_sqlite_file(
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         (void)remove(path);
@@ -782,6 +1063,7 @@ static agnc_status_t agnc_session_write_sqlite_file(
     }
 
     if (agnc_session_sqlite_exec_simple(db, "DELETE FROM messages") != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "DELETE FROM bg_jobs") != AGNC_STATUS_OK ||
         agnc_session_sqlite_exec_simple(db, "DELETE FROM meta") != AGNC_STATUS_OK) {
         (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
         sqlite3_close(db);
@@ -823,8 +1105,8 @@ static agnc_status_t agnc_session_write_sqlite_file(
 
     rc = sqlite3_prepare_v2(
         db,
-        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments) "
-        "VALUES(?, ?, ?, ?, ?)",
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
         -1,
         &insert_stmt,
         NULL);
@@ -859,6 +1141,17 @@ static agnc_status_t agnc_session_write_sqlite_file(
         if (status == AGNC_STATUS_OK) {
             status = agnc_session_sqlite_bind_text_or_null(insert_stmt, 5, item->tool_arguments);
         }
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_int64_or_null(insert_stmt, 6, item->parent_id);
+        }
+        if (status == AGNC_STATUS_OK) {
+            if (sqlite3_bind_int(insert_stmt, 7, item->is_bg) != SQLITE_OK) {
+                status = AGNC_STATUS_IO_ERROR;
+            }
+        }
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_int64_or_null(insert_stmt, 8, item->job_id);
+        }
         if (status != AGNC_STATUS_OK) {
             break;
         }
@@ -884,7 +1177,7 @@ static agnc_status_t agnc_session_write_sqlite_file(
     return AGNC_STATUS_OK;
 }
 
-static agnc_status_t agnc_session_sqlite_message_count(sqlite3 *db, size_t *count_out)
+static agnc_status_t agnc_session_sqlite_message_count_foreground(sqlite3 *db, size_t *count_out)
 {
     sqlite3_stmt *stmt = NULL;
     int rc;
@@ -894,7 +1187,12 @@ static agnc_status_t agnc_session_sqlite_message_count(sqlite3 *db, size_t *coun
     }
 
     *count_out = 0;
-    rc = sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM messages", -1, &stmt, NULL);
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COUNT(*) FROM messages WHERE COALESCE(is_bg, 0) = 0",
+        -1,
+        &stmt,
+        NULL);
     if (rc != SQLITE_OK) {
         return AGNC_STATUS_IO_ERROR;
     }
@@ -965,8 +1263,8 @@ static agnc_status_t agnc_session_sqlite_append_message(sqlite3 *db, const agnc_
 
     rc = sqlite3_prepare_v2(
         db,
-        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments) "
-        "VALUES(?, ?, ?, ?, ?)",
+        "INSERT INTO messages(role, content, tool_call_id, tool_name, tool_arguments, parent_id, is_bg, job_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
         -1,
         &stmt,
         NULL);
@@ -988,6 +1286,17 @@ static agnc_status_t agnc_session_sqlite_append_message(sqlite3 *db, const agnc_
     }
     if (status == AGNC_STATUS_OK) {
         status = agnc_session_sqlite_bind_text_or_null(stmt, 5, item->tool_arguments);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_int64_or_null(stmt, 6, item->parent_id);
+    }
+    if (status == AGNC_STATUS_OK) {
+        if (sqlite3_bind_int(stmt, 7, item->is_bg) != SQLITE_OK) {
+            status = AGNC_STATUS_IO_ERROR;
+        }
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_bind_int64_or_null(stmt, 8, item->job_id);
     }
     if (status != AGNC_STATUS_OK) {
         sqlite3_finalize(stmt);
@@ -1017,7 +1326,7 @@ static agnc_status_t agnc_session_load_sqlite_tail(
         tail_limit = AGNC_CONVERSATION_MEMORY_LIMIT;
     }
 
-    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK || db == NULL) {
         if (db != NULL) {
             sqlite3_close(db);
@@ -1025,7 +1334,13 @@ static agnc_status_t agnc_session_load_sqlite_tail(
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_message_count(db, &total);
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    status = agnc_session_sqlite_message_count_foreground(db, &total);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1063,7 +1378,8 @@ static agnc_status_t agnc_session_load_sqlite_tail(
     rc = sqlite3_prepare_v2(
         db,
         "SELECT role, content, tool_call_id, tool_name, tool_arguments "
-        "FROM messages ORDER BY id ASC LIMIT -1 OFFSET ?",
+        "FROM messages WHERE COALESCE(is_bg, 0) = 0 "
+        "ORDER BY id ASC LIMIT -1 OFFSET ?",
         -1,
         &stmt,
         NULL);
@@ -1456,6 +1772,12 @@ agnc_status_t agnc_session_sync(
                 return AGNC_STATUS_IO_ERROR;
             }
 
+            status = agnc_session_sqlite_prepare(db);
+            if (status != AGNC_STATUS_OK) {
+                sqlite3_close(db);
+                return status;
+            }
+
             if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
                 sqlite3_close(db);
                 return AGNC_STATUS_IO_ERROR;
@@ -1485,7 +1807,7 @@ agnc_status_t agnc_session_sync(
         created = 1;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1516,7 +1838,7 @@ agnc_status_t agnc_session_sync(
         return AGNC_STATUS_IO_ERROR;
     }
 
-    if (agnc_session_sqlite_message_count(db, &conversation->db_total) != AGNC_STATUS_OK) {
+    if (agnc_session_sqlite_message_count_foreground(db, &conversation->db_total) != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return AGNC_STATUS_IO_ERROR;
     }
@@ -1545,7 +1867,7 @@ agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t 
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1556,7 +1878,8 @@ agnc_status_t agnc_session_clear_messages(const char *path, const agnc_config_t 
         return AGNC_STATUS_IO_ERROR;
     }
 
-    if (agnc_session_sqlite_exec_simple(db, "DELETE FROM messages") != AGNC_STATUS_OK) {
+    if (agnc_session_sqlite_exec_simple(db, "DELETE FROM messages") != AGNC_STATUS_OK ||
+        agnc_session_sqlite_exec_simple(db, "DELETE FROM bg_jobs") != AGNC_STATUS_OK) {
         (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
         sqlite3_close(db);
         return AGNC_STATUS_IO_ERROR;
@@ -1611,6 +1934,12 @@ agnc_status_t agnc_session_compact_storage(
         return AGNC_STATUS_IO_ERROR;
     }
 
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
     if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return AGNC_STATUS_IO_ERROR;
@@ -1622,8 +1951,8 @@ agnc_status_t agnc_session_compact_storage(
 
         rc = sqlite3_prepare_v2(
             db,
-            "DELETE FROM messages WHERE id NOT IN ("
-            "  SELECT id FROM messages ORDER BY id DESC LIMIT ?"
+            "DELETE FROM messages WHERE COALESCE(is_bg, 0) = 0 AND id NOT IN ("
+            "  SELECT id FROM messages WHERE COALESCE(is_bg, 0) = 0 ORDER BY id DESC LIMIT ?"
             ")",
             -1,
             &del_stmt,
@@ -1643,7 +1972,7 @@ agnc_status_t agnc_session_compact_storage(
         }
         sqlite3_finalize(del_stmt);
 
-        if (agnc_session_sqlite_message_count(db, &remaining) == AGNC_STATUS_OK) {
+        if (agnc_session_sqlite_message_count_foreground(db, &remaining) == AGNC_STATUS_OK) {
             snprintf(
                 summary,
                 sizeof(summary),
@@ -1810,7 +2139,7 @@ agnc_status_t agnc_session_usage_save(const char *path, const agnc_session_usage
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1895,7 +2224,7 @@ agnc_status_t agnc_session_meta_get(const char *path, const char *key, char **va
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1924,7 +2253,7 @@ agnc_status_t agnc_session_meta_set(const char *path, const char *key, const cha
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -1965,7 +2294,7 @@ agnc_status_t agnc_session_meta_delete(const char *path, const char *key)
         return AGNC_STATUS_IO_ERROR;
     }
 
-    status = agnc_session_sqlite_exec_simple(db, AGNC_SESSION_SCHEMA);
+    status = agnc_session_sqlite_prepare(db);
     if (status != AGNC_STATUS_OK) {
         sqlite3_close(db);
         return status;
@@ -2049,4 +2378,374 @@ agnc_status_t agnc_session_cost_accumulate(const char *path, double delta_usd)
 agnc_status_t agnc_session_cost_reset(const char *path)
 {
     return agnc_session_meta_set(path, "usage_cost_total_usd", "0");
+}
+
+agnc_status_t agnc_session_foreground_max_id(const char *path, int64_t *max_id_out)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || max_id_out == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    *max_id_out = 0;
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COALESCE(MAX(id), 0) FROM messages WHERE COALESCE(is_bg, 0) = 0",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *max_id_out = (int64_t)sqlite3_column_int64(stmt, 0);
+        status = AGNC_STATUS_OK;
+    } else {
+        status = AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_load_bg_context(
+    const char *path,
+    agnc_conversation_t *conversation,
+    int64_t max_id,
+    size_t tail_limit)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *count_stmt = NULL;
+    sqlite3_stmt *load_stmt = NULL;
+    size_t total = 0;
+    size_t offset = 0;
+    agnc_status_t status = AGNC_STATUS_OK;
+    int rc;
+
+    if (path == NULL || conversation == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (tail_limit == 0) {
+        tail_limit = AGNC_CONVERSATION_MEMORY_LIMIT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT COUNT(*) FROM messages "
+        "WHERE COALESCE(is_bg, 0) = 0 AND (? <= 0 OR id <= ?)",
+        -1,
+        &count_stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (sqlite3_bind_int64(count_stmt, 1, (sqlite3_int64)max_id) != SQLITE_OK ||
+        sqlite3_bind_int64(count_stmt, 2, (sqlite3_int64)max_id) != SQLITE_OK ||
+        sqlite3_step(count_stmt) != SQLITE_ROW) {
+        sqlite3_finalize(count_stmt);
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    total = (size_t)sqlite3_column_int64(count_stmt, 0);
+    sqlite3_finalize(count_stmt);
+
+    agnc_conversation_clear(conversation);
+    conversation->unsynced_count = 0;
+    conversation->db_total = 0;
+    conversation->memory_skipped = 0;
+
+    if (total == 0) {
+        sqlite3_close(db);
+        return AGNC_STATUS_OK;
+    }
+
+    if (total > tail_limit) {
+        offset = total - tail_limit;
+        conversation->memory_skipped = offset;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "SELECT role, content, tool_call_id, tool_name, tool_arguments "
+        "FROM messages "
+        "WHERE COALESCE(is_bg, 0) = 0 AND (? <= 0 OR id <= ?) "
+        "ORDER BY id ASC LIMIT -1 OFFSET ?",
+        -1,
+        &load_stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    if (sqlite3_bind_int64(load_stmt, 1, (sqlite3_int64)max_id) != SQLITE_OK ||
+        sqlite3_bind_int64(load_stmt, 2, (sqlite3_int64)max_id) != SQLITE_OK ||
+        sqlite3_bind_int64(load_stmt, 3, (sqlite3_int64)offset) != SQLITE_OK) {
+        sqlite3_finalize(load_stmt);
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    while ((rc = sqlite3_step(load_stmt)) == SQLITE_ROW) {
+        const char *role = (const char *)sqlite3_column_text(load_stmt, 0);
+        const char *content = (const char *)sqlite3_column_text(load_stmt, 1);
+        const char *tool_call_id = (const char *)sqlite3_column_text(load_stmt, 2);
+        const char *tool_name = (const char *)sqlite3_column_text(load_stmt, 3);
+        const char *tool_arguments = (const char *)sqlite3_column_text(load_stmt, 4);
+
+        if (role == NULL) {
+            continue;
+        }
+
+        status = agnc_conversation_push_hydrated(
+            conversation, role, content, tool_call_id, tool_name, tool_arguments);
+        if (status != AGNC_STATUS_OK) {
+            break;
+        }
+    }
+
+    sqlite3_finalize(load_stmt);
+    sqlite3_close(db);
+    return status;
+}
+
+static agnc_status_t agnc_session_sqlite_now_text(char *buffer, size_t buffer_size)
+{
+    time_t now;
+
+    if (buffer == NULL || buffer_size == 0) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    time(&now);
+    snprintf(buffer, buffer_size, "%lld", (long long)now);
+    return AGNC_STATUS_OK;
+}
+
+agnc_status_t agnc_session_bg_job_create(
+    const char *path,
+    unsigned job_id,
+    const char *prompt,
+    int64_t context_parent_id)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    char created_at[32];
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || prompt == NULL || prompt[0] == '\0' || job_id == 0) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    status = agnc_session_sqlite_now_text(created_at, sizeof(created_at));
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO bg_jobs(id, status, prompt, context_parent_id, created_at) "
+        "VALUES(?, 'queued', ?, ?, ?)",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        status = AGNC_STATUS_IO_ERROR;
+    } else if (sqlite3_bind_int(stmt, 1, (int)job_id) != SQLITE_OK ||
+               sqlite3_bind_text(stmt, 2, prompt, -1, SQLITE_STATIC) != SQLITE_OK ||
+               sqlite3_bind_int64(stmt, 3, (sqlite3_int64)context_parent_id) != SQLITE_OK ||
+               sqlite3_bind_text(stmt, 4, created_at, -1, SQLITE_STATIC) != SQLITE_OK ||
+               sqlite3_step(stmt) != SQLITE_DONE) {
+        status = AGNC_STATUS_IO_ERROR;
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+    } else {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+    }
+
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_bg_job_set_status(
+    const char *path,
+    unsigned job_id,
+    const char *status_text,
+    const char *summary,
+    const char *error)
+{
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    char finished_at[32];
+    agnc_status_t status;
+    int rc;
+
+    if (path == NULL || job_id == 0 || status_text == NULL || status_text[0] == '\0') {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL) {
+            sqlite3_close(db);
+        }
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    status = agnc_session_sqlite_prepare(db);
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    status = agnc_session_sqlite_now_text(finished_at, sizeof(finished_at));
+    if (status != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return status;
+    }
+
+    if (agnc_session_sqlite_exec_simple(db, "BEGIN IMMEDIATE") != AGNC_STATUS_OK) {
+        sqlite3_close(db);
+        return AGNC_STATUS_IO_ERROR;
+    }
+
+    rc = sqlite3_prepare_v2(
+        db,
+        "UPDATE bg_jobs SET status = ?, summary = ?, error = ?, finished_at = ? WHERE id = ?",
+        -1,
+        &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        status = AGNC_STATUS_IO_ERROR;
+    } else if (sqlite3_bind_text(stmt, 1, status_text, -1, SQLITE_STATIC) != SQLITE_OK) {
+        status = AGNC_STATUS_IO_ERROR;
+    } else {
+        status = agnc_session_sqlite_bind_text_or_null(stmt, 2, summary);
+        if (status == AGNC_STATUS_OK) {
+            status = agnc_session_sqlite_bind_text_or_null(stmt, 3, error);
+        }
+        if (status == AGNC_STATUS_OK &&
+            sqlite3_bind_text(stmt, 4, finished_at, -1, SQLITE_STATIC) != SQLITE_OK) {
+            status = AGNC_STATUS_IO_ERROR;
+        }
+        if (status == AGNC_STATUS_OK && sqlite3_bind_int(stmt, 5, (int)job_id) != SQLITE_OK) {
+            status = AGNC_STATUS_IO_ERROR;
+        }
+        if (status == AGNC_STATUS_OK && sqlite3_step(stmt) != SQLITE_DONE) {
+            status = AGNC_STATUS_IO_ERROR;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sqlite_exec_simple(db, "COMMIT");
+    } else {
+        (void)agnc_session_sqlite_exec_simple(db, "ROLLBACK");
+    }
+
+    sqlite3_close(db);
+    return status;
+}
+
+agnc_status_t agnc_session_bg_append_foreground_notice(
+    const char *path,
+    unsigned job_id,
+    const char *prompt,
+    const char *summary,
+    const agnc_config_t *config)
+{
+    agnc_conversation_t notice;
+    char user_line[320];
+    const char *assistant_text;
+    agnc_status_t status;
+
+    if (path == NULL || job_id == 0) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    assistant_text = summary != NULL && summary[0] != '\0' ? summary : "(kosong)";
+    if (prompt != NULL && prompt[0] != '\0') {
+        snprintf(user_line, sizeof(user_line), "[bg #%u] %.240s", job_id, prompt);
+    } else {
+        snprintf(user_line, sizeof(user_line), "[bg #%u]", job_id);
+    }
+
+    agnc_conversation_init(&notice);
+    status = agnc_conversation_push(&notice, "user", user_line, NULL, NULL, NULL);
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_conversation_push(&notice, "assistant", assistant_text, NULL, NULL, NULL);
+    }
+    if (status == AGNC_STATUS_OK) {
+        status = agnc_session_sync(path, &notice, config);
+    }
+
+    agnc_conversation_clear(&notice);
+    return status;
 }

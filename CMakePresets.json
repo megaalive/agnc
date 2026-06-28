@@ -30,7 +30,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "VCPKG_MANIFEST_MODE": "ON",
         "VCPKG_BUILD_TYPE": "debug",
-        "AGNC_BUILD_GRPC": "ON"
+        "AGNC_BUILD_GRPC": "OFF"
       }
     },
     {
@@ -46,7 +46,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_MANIFEST_MODE": "ON",
         "VCPKG_BUILD_TYPE": "release",
-        "AGNC_BUILD_GRPC": "ON"
+        "AGNC_BUILD_GRPC": "OFF"
       }
     },
     {

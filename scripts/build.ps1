@@ -5,7 +5,10 @@ param(
     [string]$BuildType = "",
 
     [ValidateSet("Debug", "Release")]
-    [string]$Configuration = ""
+    [string]$Configuration = "",
+
+    # Aktifkan vcpkg grpc/protobuf + agnc serve (build pertama lama).
+    [switch]$Grpc
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,10 +50,16 @@ Write-Host "Configuration: $Configuration"
 Write-Host "Preset: $preset"
 Write-Host "Output: $binary"
 
-if ($Configuration -eq "Release") {
-    Write-Host "Release: vcpkg hanya build dependency release (bukan grpc debug)."
-} elseif ($Configuration -eq "Debug") {
-    Write-Host "Debug: vcpkg hanya build dependency debug."
+if ($Grpc) {
+    Write-Host "gRPC: enabled (vcpkg grpc/protobuf, agnc serve)."
+    if ($Configuration -eq "Release") {
+        Write-Host "Release+gRPC: vcpkg hanya dependency release (bukan grpc debug)."
+    }
+} else {
+    Write-Host "gRPC: disabled (default). Tambah -Grpc untuk agnc serve."
+}
+if ($Configuration -eq "Debug" -and $Grpc) {
+    Write-Host "Debug+gRPC: vcpkg hanya build dependency debug."
 }
 
 $env:VCPKG_ROOT = Join-Path $vsPath "VC\vcpkg"
@@ -66,6 +75,11 @@ if ($Configuration -eq "Release") {
     $cmakeConfigureArgs += "-DVCPKG_BUILD_TYPE=release"
 } elseif ($Configuration -eq "Debug") {
     $cmakeConfigureArgs += "-DVCPKG_BUILD_TYPE=debug"
+}
+if ($Grpc) {
+    $cmakeConfigureArgs += "-DAGNC_BUILD_GRPC=ON"
+} else {
+    $cmakeConfigureArgs += "-DAGNC_BUILD_GRPC=OFF"
 }
 
 Push-Location $root

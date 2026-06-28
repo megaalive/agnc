@@ -9,6 +9,7 @@
 
 #include "agnc/config.h"
 #include "agnc/console.h"
+#include "agnc/tui.h"
 #include "agnc/conversation.h"
 #include "agnc/mcp/session.h"
 #include "agnc/permissions.h"
@@ -42,6 +43,7 @@ typedef struct {
     char *prompt;
     char *session_name;
     char *session_path;
+    int64_t context_parent_id;
     char *summary;
     agnc_config_t config;
     agnc_conversation_t conversation;
@@ -64,6 +66,7 @@ typedef struct {
     char *prompt;
     char *session_name;
     char *session_path;
+    int64_t context_parent_id;
     agnc_config_t config;
     int auto_approve;
 } agnc_repl_job_spec_t;
@@ -252,25 +255,40 @@ static int agnc_repl_job_spec_init(
     agnc_repl_job_spec_t *spec,
     const char *prompt,
     const agnc_config_t *parent_config,
+    const char *parent_session_path,
+    const char *parent_session_name,
+    int64_t context_parent_id,
     int parent_auto_approve,
     unsigned id)
 {
-    char session_name[64];
     agnc_status_t status;
 
     memset(spec, 0, sizeof(*spec));
     agnc_config_init(&spec->config);
     spec->id = id;
     spec->auto_approve = parent_auto_approve;
+    spec->context_parent_id = context_parent_id;
     spec->prompt = agnc_strdup_local(prompt);
     if (spec->prompt == NULL) {
         goto fail;
     }
 
-    snprintf(session_name, sizeof(session_name), "bg-%u", id);
-    spec->session_name = agnc_strdup_local(session_name);
-    status = agnc_session_path_for_name(session_name, &spec->session_path);
-    if (status != AGNC_STATUS_OK || spec->session_name == NULL) {
+    if (parent_session_path == NULL || parent_session_path[0] == '\0') {
+        goto fail;
+    }
+
+    spec->session_path = agnc_strdup_local(parent_session_path);
+    if (parent_session_name != NULL && parent_session_name[0] != '\0') {
+        spec->session_name = agnc_strdup_local(parent_session_name);
+    } else {
+        spec->session_name = agnc_strdup_local("current");
+    }
+    if (spec->session_path == NULL || spec->session_name == NULL) {
+        goto fail;
+    }
+
+    status = agnc_session_bg_job_create(parent_session_path, id, prompt, context_parent_id);
+    if (status != AGNC_STATUS_OK) {
         goto fail;
     }
 
@@ -287,6 +305,13 @@ fail:
 
 static void agnc_repl_job_print_started(unsigned id, const char *session_name, int parent_auto_approve)
 {
+    if (agnc_tui_is_active()) {
+        char toast[128];
+        snprintf(toast, sizeof(toast), "bg job %u started (%s)", id, session_name);
+        agnc_tui_set_toast(toast);
+        return;
+    }
+
     printf("background job %u dimulai (sesi %s)\n", id, session_name);
     if (!parent_auto_approve && !agnc_permission_session_has_shell()) {
         printf("  (tool shell/write butuh izin — prompt muncul di REPL saat job membutuhkannya)\n");
@@ -309,6 +334,7 @@ static int agnc_repl_job_start_locked(agnc_repl_job_spec_t *spec)
     g_job.prompt = spec->prompt;
     g_job.session_name = spec->session_name;
     g_job.session_path = spec->session_path;
+    g_job.context_parent_id = spec->context_parent_id;
     g_job.auto_approve = spec->auto_approve;
     spec->prompt = NULL;
     spec->session_name = NULL;
@@ -317,6 +343,16 @@ static int agnc_repl_job_start_locked(agnc_repl_job_spec_t *spec)
     agnc_config_free(&g_job.config);
     g_job.config = spec->config;
     agnc_config_init(&spec->config);
+
+    agnc_conversation_clear(&g_job.conversation);
+    if (g_job.session_path != NULL) {
+        (void)agnc_session_load_bg_context(
+            g_job.session_path,
+            &g_job.conversation,
+            g_job.context_parent_id,
+            AGNC_CONVERSATION_MEMORY_LIMIT);
+        (void)agnc_session_bg_job_set_status(g_job.session_path, g_job.id, "running", NULL, NULL);
+    }
 
     g_job.state = AGNC_REPL_JOB_RUNNING;
     g_job.cancel_flag = 0;
@@ -390,7 +426,7 @@ void agnc_repl_jobs_shutdown(void)
     size_t index;
 
     agnc_repl_job_cancel_running();
-    agnc_repl_jobs_poll();
+    (void)agnc_repl_jobs_poll(NULL, NULL);
     agnc_repl_jobs_lock();
     for (index = 0; index < g_queue_count; index++) {
         agnc_repl_job_spec_free(&g_queue[index]);
@@ -403,6 +439,40 @@ void agnc_repl_jobs_shutdown(void)
         g_job_lock_ready = 0;
     }
 #endif
+}
+
+static void agnc_repl_job_merge_foreground_notice(
+    agnc_conversation_t *conversation,
+    unsigned job_id,
+    const char *prompt,
+    const char *summary)
+{
+    char user_line[320];
+    const char *assistant_text;
+
+    if (conversation == NULL) {
+        return;
+    }
+
+    assistant_text = summary != NULL && summary[0] != '\0' ? summary : "(kosong)";
+    if (prompt != NULL && prompt[0] != '\0') {
+        snprintf(user_line, sizeof(user_line), "[bg #%u] %.240s", job_id, prompt);
+    } else {
+        snprintf(user_line, sizeof(user_line), "[bg #%u]", job_id);
+    }
+
+    (void)agnc_conversation_push_hydrated(conversation, "user", user_line, NULL, NULL, NULL);
+    (void)agnc_conversation_push_hydrated(conversation, "assistant", assistant_text, NULL, NULL, NULL);
+    conversation->db_total += 2;
+}
+
+static int agnc_repl_job_session_paths_match(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    return strcmp(left, right) == 0;
 }
 
 static const char *agnc_repl_job_last_assistant(const agnc_conversation_t *conversation)
@@ -510,6 +580,7 @@ static void *agnc_repl_job_thread_main(void *unused)
     status = agnc_query_run(&g_job.config, &g_job.conversation, g_job.prompt, &options);
     agnc_permission_clear_background_ask();
     if (g_job.session_path != NULL) {
+        agnc_conversation_mark_unsynced_bg(&g_job.conversation, (int)g_job.id);
         (void)agnc_session_sync(g_job.session_path, &g_job.conversation, &g_job.config);
     }
 
@@ -538,6 +609,8 @@ static void *agnc_repl_job_thread_main(void *unused)
 int agnc_repl_job_submit(
     const char *prompt,
     const agnc_config_t *parent_config,
+    const char *parent_session_path,
+    const char *parent_session_name,
     int parent_auto_approve,
     unsigned *out_id,
     int *out_queued)
@@ -547,9 +620,17 @@ int agnc_repl_job_submit(
     int started = 0;
     int queued = 0;
     size_t queue_pos = 0;
-    char session_name[64];
+    char session_label[64];
+    int64_t context_parent_id = 0;
+    agnc_status_t anchor_status;
 
-    if (prompt == NULL || prompt[0] == '\0' || parent_config == NULL) {
+    if (prompt == NULL || prompt[0] == '\0' || parent_config == NULL || parent_session_path == NULL ||
+        parent_session_path[0] == '\0') {
+        return 1;
+    }
+
+    anchor_status = agnc_session_foreground_max_id(parent_session_path, &context_parent_id);
+    if (anchor_status != AGNC_STATUS_OK) {
         return 1;
     }
 
@@ -562,12 +643,24 @@ int agnc_repl_job_submit(
         *out_queued = 0;
     }
 
-    if (agnc_repl_job_spec_init(&spec, prompt, parent_config, parent_auto_approve, id) != 0) {
+    if (agnc_repl_job_spec_init(
+            &spec,
+            prompt,
+            parent_config,
+            parent_session_path,
+            parent_session_name,
+            context_parent_id,
+            parent_auto_approve,
+            id) != 0) {
         agnc_repl_jobs_unlock();
         return 1;
     }
 
-    snprintf(session_name, sizeof(session_name), "bg-%u", id);
+    if (parent_session_name != NULL && parent_session_name[0] != '\0') {
+        snprintf(session_label, sizeof(session_label), "%s", parent_session_name);
+    } else {
+        snprintf(session_label, sizeof(session_label), "current");
+    }
 
     if (g_job.state == AGNC_REPL_JOB_IDLE) {
         started = agnc_repl_job_start_locked(&spec);
@@ -589,13 +682,13 @@ int agnc_repl_job_submit(
     agnc_repl_jobs_unlock();
 
     if (started) {
-        agnc_repl_job_print_started(id, session_name, parent_auto_approve);
+        agnc_repl_job_print_started(id, session_label, parent_auto_approve);
     } else if (queued) {
         printf(
             "background job %u diantri (posisi %zu, sesi %s)\n",
             id,
             queue_pos,
-            session_name);
+            session_label);
     } else if (!queued) {
         return 1;
     }
@@ -603,7 +696,7 @@ int agnc_repl_job_submit(
     return 0;
 }
 
-int agnc_repl_jobs_poll(void)
+int agnc_repl_jobs_poll(agnc_conversation_t *merge_conversation, const char *active_session_path)
 {
     int notify = 0;
     int started = 0;
@@ -612,6 +705,8 @@ int agnc_repl_jobs_poll(void)
     unsigned started_id = 0;
     char *summary = NULL;
     char *session_name = NULL;
+    char *session_path = NULL;
+    char *prompt = NULL;
     char started_session[64];
     agnc_repl_job_state_t state = AGNC_REPL_JOB_IDLE;
 
@@ -647,6 +742,8 @@ int agnc_repl_jobs_poll(void)
         state = g_job.state;
         summary = g_job.summary != NULL ? agnc_strdup_local(g_job.summary) : NULL;
         session_name = g_job.session_name != NULL ? agnc_strdup_local(g_job.session_name) : NULL;
+        session_path = g_job.session_path != NULL ? agnc_strdup_local(g_job.session_path) : NULL;
+        prompt = g_job.prompt != NULL ? agnc_strdup_local(g_job.prompt) : NULL;
         agnc_repl_job_reset_locked();
         if (!started) {
             started = agnc_repl_job_try_start_next_locked(&started_id, started_session, sizeof(started_session));
@@ -666,8 +763,29 @@ int agnc_repl_jobs_poll(void)
 
     if (notify) {
         char header[160];
+        const char *status_text = "done";
+        const char *error_text = NULL;
 
-        agnc_console_clear_input_line();
+        if (state == AGNC_REPL_JOB_CANCELLED) {
+            status_text = "cancelled";
+        } else if (state == AGNC_REPL_JOB_FAILED) {
+            status_text = "failed";
+            error_text = summary;
+        }
+
+        if (session_path != NULL) {
+            (void)agnc_session_bg_job_set_status(session_path, id, status_text, summary, error_text);
+            if (state == AGNC_REPL_JOB_DONE) {
+                (void)agnc_session_bg_append_foreground_notice(session_path, id, prompt, summary, NULL);
+                if (agnc_repl_job_session_paths_match(session_path, active_session_path)) {
+                    agnc_repl_job_merge_foreground_notice(merge_conversation, id, prompt, summary);
+                }
+            }
+        }
+
+        if (!agnc_tui_is_active()) {
+            agnc_console_clear_input_line();
+        }
 
         if (state == AGNC_REPL_JOB_DONE) {
             snprintf(
@@ -676,10 +794,36 @@ int agnc_repl_jobs_poll(void)
                 "background job %u selesai — sesi %s",
                 id,
                 session_name != NULL ? session_name : "?");
-            agnc_console_print_chat_system(header);
-            if (summary != NULL && summary[0] != '\0') {
-                agnc_console_print_chat_assistant_begin();
-                agnc_console_print_assistant_body(summary);
+
+            if (agnc_tui_is_active()) {
+                if (summary != NULL && summary[0] != '\0' && strcmp(summary, "(kosong)") != 0) {
+                    char label[192];
+
+                    agnc_console_begin_repl_output();
+                    snprintf(
+                        label,
+                        sizeof(label),
+                        "bg job %u · sesi %s",
+                        id,
+                        session_name != NULL ? session_name : "?");
+                    agnc_console_print_chat_system(label);
+                    agnc_console_print_chat_assistant_begin();
+                    agnc_console_print_assistant_body(summary);
+                    agnc_console_end_repl_output();
+                } else {
+                    agnc_tui_set_toast(header);
+                }
+            } else {
+                agnc_console_clear_input_line();
+                agnc_console_print_chat_system(header);
+                if (summary != NULL && summary[0] != '\0' && strcmp(summary, "(kosong)") != 0) {
+                    agnc_console_print_chat_assistant_begin();
+                    agnc_console_print_assistant_body(summary);
+                } else {
+                    agnc_console_print_chat_system(
+                        "job selesai tanpa jawaban teks — lihat /jobs atau muat ulang sesi");
+                }
+                fflush(stdout);
             }
         } else if (state == AGNC_REPL_JOB_CANCELLED) {
             snprintf(
@@ -688,7 +832,11 @@ int agnc_repl_jobs_poll(void)
                 "background job %u dibatalkan — sesi %s",
                 id,
                 session_name != NULL ? session_name : "?");
-            agnc_console_print_chat_system(header);
+            if (agnc_tui_is_active()) {
+                agnc_tui_set_toast(header);
+            } else {
+                agnc_console_print_chat_system(header);
+            }
         } else {
             if (summary != NULL && summary[0] != '\0') {
                 snprintf(
@@ -706,11 +854,17 @@ int agnc_repl_jobs_poll(void)
                     id,
                     session_name != NULL ? session_name : "?");
             }
-            agnc_console_print_chat_system(header);
+            if (agnc_tui_is_active()) {
+                agnc_tui_set_toast(header);
+            } else {
+                agnc_console_print_chat_system(header);
+            }
         }
 
         free(summary);
         free(session_name);
+        free(session_path);
+        free(prompt);
     }
 
     return notify || started;
@@ -773,7 +927,11 @@ void agnc_repl_jobs_handle_pending_permission(void)
     detail = g_job.pending_perm_detail != NULL ? agnc_strdup_local(g_job.pending_perm_detail) : NULL;
     agnc_repl_jobs_unlock();
 
-    agnc_console_print_chat_system("background job membutuhkan izin tool");
+    if (agnc_tui_is_active()) {
+        agnc_tui_set_toast("bg job: butuh izin tool — jawab [y/N] di prompt");
+    } else {
+        agnc_console_print_chat_system("background job membutuhkan izin tool");
+    }
 
     switch (kind) {
     case AGNC_REPL_JOB_PERM_SHELL:
@@ -818,37 +976,40 @@ void agnc_repl_jobs_print_status(void)
 
     agnc_repl_jobs_lock();
     if (g_job.state == AGNC_REPL_JOB_IDLE && g_queue_count == 0) {
-        printf("  (tidak ada job background)\n");
+        agnc_console_repl_printf("  (tidak ada job background)\n");
     } else {
         if (g_job.state != AGNC_REPL_JOB_IDLE) {
-            printf("  job %u: ", g_job.id);
             switch (g_job.state) {
             case AGNC_REPL_JOB_RUNNING:
                 if (g_job.pending_perm != AGNC_REPL_JOB_PERM_NONE) {
-                    printf(
-                        "waiting permission (%s) — sesi %s\n",
+                    agnc_console_repl_printf(
+                        "  job %u: waiting permission (%s) — sesi %s\n",
+                        g_job.id,
                         g_job.pending_perm_detail != NULL ? g_job.pending_perm_detail : "?",
                         g_job.session_name != NULL ? g_job.session_name : "?");
                 } else {
-                    printf("running — sesi %s\n", g_job.session_name != NULL ? g_job.session_name : "?");
+                    agnc_console_repl_printf(
+                        "  job %u: running — sesi %s\n",
+                        g_job.id,
+                        g_job.session_name != NULL ? g_job.session_name : "?");
                 }
                 break;
             case AGNC_REPL_JOB_DONE:
-                printf("done\n");
+                agnc_console_repl_printf("  job %u: done\n", g_job.id);
                 break;
             case AGNC_REPL_JOB_CANCELLED:
-                printf("cancelled\n");
+                agnc_console_repl_printf("  job %u: cancelled\n", g_job.id);
                 break;
             case AGNC_REPL_JOB_FAILED:
-                printf("failed\n");
+                agnc_console_repl_printf("  job %u: failed\n", g_job.id);
                 break;
             default:
-                printf("?\n");
+                agnc_console_repl_printf("  job %u: ?\n", g_job.id);
                 break;
             }
         }
         for (index = 0; index < g_queue_count; index++) {
-            printf(
+            agnc_console_repl_printf(
                 "  job %u: queued (posisi %zu) — sesi %s\n",
                 g_queue[index].id,
                 index + 1,

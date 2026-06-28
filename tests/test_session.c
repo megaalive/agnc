@@ -519,6 +519,55 @@ static void test_session_usage_accumulate(void **state)
     assert_int_equal(usage.total_tokens, 0);
 }
 
+static void test_session_bg_job_foreground_split(void **state)
+{
+    agnc_conversation_t conversation;
+    agnc_conversation_t loaded;
+    agnc_config_t config;
+    int64_t anchor_id = 0;
+    agnc_status_t status;
+
+    (void)state;
+
+    agnc_conversation_init(&conversation);
+    agnc_conversation_init(&loaded);
+    agnc_config_init(&config);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "hello", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_conversation_push(&conversation, "assistant", "hi", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+
+    status = agnc_session_foreground_max_id(g_session_path, &anchor_id);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_true(anchor_id >= 2);
+
+    assert_int_equal(agnc_session_bg_job_create(g_session_path, 1, "ringkasan docs", anchor_id), AGNC_STATUS_OK);
+
+    agnc_conversation_clear(&conversation);
+    status = agnc_session_load_bg_context(g_session_path, &conversation, anchor_id, AGNC_CONVERSATION_MEMORY_LIMIT);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_int_equal((int)conversation.count, 2);
+
+    assert_int_equal(agnc_conversation_push(&conversation, "user", "ringkasan docs", NULL, NULL, NULL), AGNC_STATUS_OK);
+    assert_int_equal(agnc_conversation_push(&conversation, "assistant", "hasil bg", NULL, NULL, NULL), AGNC_STATUS_OK);
+    agnc_conversation_mark_unsynced_bg(&conversation, 1);
+    assert_int_equal(agnc_session_sync(g_session_path, &conversation, &config), AGNC_STATUS_OK);
+
+    assert_int_equal(
+        agnc_session_bg_append_foreground_notice(g_session_path, 1, "ringkasan docs", "hasil bg", &config),
+        AGNC_STATUS_OK);
+    assert_int_equal(agnc_session_bg_job_set_status(g_session_path, 1, "done", "hasil bg", NULL), AGNC_STATUS_OK);
+
+    status = agnc_session_load(g_session_path, &loaded, NULL, NULL);
+    assert_int_equal(status, AGNC_STATUS_OK);
+    assert_true(loaded.count >= 4);
+    assert_true(loaded.db_total >= 4);
+
+    agnc_conversation_clear(&loaded);
+    agnc_conversation_clear(&conversation);
+    agnc_config_free(&config);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -534,6 +583,7 @@ int main(void)
         cmocka_unit_test(test_session_delete_by_name),
         cmocka_unit_test(test_session_migrate_json),
         cmocka_unit_test_setup_teardown(test_session_sync_append, setup_session_path, teardown_session_path),
+        cmocka_unit_test_setup_teardown(test_session_bg_job_foreground_split, setup_session_path, teardown_session_path),
         cmocka_unit_test_setup_teardown(test_session_usage_accumulate, setup_session_path, teardown_session_path),
     };
 

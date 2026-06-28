@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-option(AGNC_BUILD_GRPC "Build agnc serve gRPC server" ON)
+option(AGNC_BUILD_GRPC "Build agnc serve gRPC server" OFF)
 if(AGNC_BUILD_GRPC)
     set(VCPKG_MANIFEST_FEATURES grpc CACHE STRING "vcpkg manifest features" FORCE)
 endif()
@@ -51,6 +51,7 @@ add_executable(agnc
     src/cli/print.c
     src/cli/repl.c
     src/cli/repl_jobs.c
+    src/cli/tui.c
     src/cli/line_edit.c
     src/config/config.c
     src/config/oauth.c
@@ -157,6 +158,7 @@ if(AGNC_BUILD_TESTS)
         tests/test_markdown_render.c
         src/cli/console.c
         src/cli/markdown_render.c
+        src/cli/tui.c
     )
 
     target_include_directories(test_markdown_render PRIVATE

@@ -16,6 +16,7 @@
 #include "agnc/provider.h"
 #include "agnc/query.h"
 #include "agnc/repl_jobs.h"
+#include "agnc/tui.h"
 #include "agnc/cost.h"
 #include "agnc/session.h"
 #include "agnc/hooks.h"
@@ -28,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -57,6 +59,8 @@ static BOOL WINAPI agnc_repl_ctrl_handler(DWORD event_type)
             *bg_cancel = 1;
             return TRUE;
         }
+        agnc_repl_line_signal_exit();
+        return TRUE;
     }
     return FALSE;
 }
@@ -73,7 +77,9 @@ static void agnc_repl_sigint_handler(int signum)
     bg_cancel = agnc_repl_jobs_running_cancel_flag();
     if (bg_cancel != NULL) {
         *bg_cancel = 1;
+        return;
     }
+    agnc_repl_line_signal_exit();
 }
 #endif
 
@@ -89,9 +95,18 @@ static void agnc_repl_install_cancel_handler(void)
 #endif
 }
 
+static agnc_conversation_t *g_repl_bg_merge_conversation;
+static const char *g_repl_bg_merge_session_path;
+
+static void agnc_repl_bg_merge_bind(agnc_conversation_t *conversation, const char *session_path)
+{
+    g_repl_bg_merge_conversation = conversation;
+    g_repl_bg_merge_session_path = session_path;
+}
+
 static int agnc_repl_bg_idle_poll(void)
 {
-    return agnc_repl_jobs_poll();
+    return agnc_repl_jobs_poll(g_repl_bg_merge_conversation, g_repl_bg_merge_session_path);
 }
 
 static void agnc_repl_bg_idle_perm_handle(void)
@@ -143,39 +158,95 @@ static void agnc_repl_trim(char *line)
     *end = '\0';
 }
 
+static void agnc_repl_refresh_tui_status(
+    const agnc_config_t *config,
+    const char *session_name,
+    long last_turn_tokens)
+{
+    static char last_model[128];
+    static char last_session[64];
+    static long last_tokens = -2;
+    static int last_queue = -1;
+    static int last_running = -1;
+    agnc_tui_status_t status;
+    int queue_jobs;
+    int running_jobs;
+    const char *model;
+    const char *session;
+
+    if (!agnc_tui_is_active()) {
+        return;
+    }
+
+    model = config != NULL && config->model != NULL ? config->model : "?";
+    session = session_name != NULL ? session_name : "?";
+    queue_jobs = agnc_repl_jobs_queue_length();
+    running_jobs = agnc_repl_jobs_has_running();
+
+    if (strcmp(model, last_model) == 0 &&
+        strcmp(session, last_session) == 0 &&
+        last_turn_tokens == last_tokens &&
+        queue_jobs == last_queue &&
+        running_jobs == last_running) {
+        return;
+    }
+
+    snprintf(last_model, sizeof(last_model), "%s", model);
+    snprintf(last_session, sizeof(last_session), "%s", session);
+    last_tokens = last_turn_tokens;
+    last_queue = queue_jobs;
+    last_running = running_jobs;
+
+    memset(&status, 0, sizeof(status));
+    status.model = model;
+    status.session = session;
+    status.last_turn_tokens = last_turn_tokens;
+    status.queue_jobs = queue_jobs;
+    status.running_jobs = running_jobs;
+    agnc_tui_update_status(&status);
+}
+
 static void agnc_repl_print_help(void)
 {
+    agnc_console_begin_repl_output();
     agnc_console_print_chat_system("mode interaktif");
-    printf("Slash commands:\n");
-    printf("  /help              Tampilkan bantuan ini\n");
-    printf("  /clear             Hapus riwayat percakapan\n");
-    printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
-    printf("  /models [provider] [filter]  Discovery model semua provider (filter substring)\n");
-    printf("  /models --filter PATTERN     Filter nama model (case-insensitive)\n");
-    printf("  /model [nama]      Model aktif; tanpa arg = ringkasan, dengan arg = ganti model\n");
-    printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
-    printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
-    printf("  /session           Daftar sesi tersimpan\n");
-    printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
-    printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
-    printf("  /session delete <nama>  Hapus file sesi dari disk\n");
-    printf("  /doctor            Jalankan health check\n");
-    printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
-    printf("  /hooks             Daftar hook per event (config hooks.*)\n");
-    printf("  /usage             Token usage sesi + turn terakhir\n");
-    printf("  /cost              Estimasi biaya USD sesi (heuristik)\n");
-    printf("  /bg <prompt>       Jalankan prompt di background (antre hingga %d; sesi bg-N)\n", AGNC_REPL_JOB_QUEUE_MAX);
-    printf("  /jobs              Status job background; /jobs cancel | clear\n");
-    printf("  /exit, /quit       Keluar\n");
-    printf("\nWorkspace dan config agnc:\n");
-    printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
-    printf("  Pindah workspace: set AGNC_WORKSPACE + restart agnc, atau cd ke repo lain lalu jalankan agnc.\n");
-    printf("  Config global = ~/.agnc.json (di luar repo); sesi = ~/.agnc/sessions/*.sqlite.\n");
-    printf("  Root MCP filesystem = mcp.servers[].args di config; setelah edit config: /mcp reconnect.\n");
-    printf("\nCtrl+C saat request berjalan membatalkan tanpa keluar REPL.\n");
-    printf("  user      HH:MM:SS + teks (hijau)\n");
-    printf("  asisten   HH:MM:SS + jawaban (default; nama file abu-abu)\n");
-    printf("  agnc      timestamp + pesan sistem (abu-abu)\n");
+    agnc_console_repl_printf("Slash commands:\n");
+    agnc_console_repl_printf("  /help              Tampilkan bantuan ini\n");
+    agnc_console_repl_printf("  /clear             Hapus riwayat percakapan\n");
+    agnc_console_repl_printf("  /cls               Bersihkan layar terminal (bukan riwayat chat)\n");
+    agnc_console_repl_printf("  /compact [n]       Ringkas riwayat (default keep %d pesan)\n", AGNC_COMPACT_KEEP_TAIL);
+    agnc_console_repl_printf("  /models [provider] [filter]  Discovery model semua provider (filter substring)\n");
+    agnc_console_repl_printf("  /models --filter PATTERN     Filter nama model (case-insensitive)\n");
+    agnc_console_repl_printf("  /model [nama]      Model aktif; tanpa arg = ringkasan, dengan arg = ganti model\n");
+    agnc_console_repl_printf("  /provider [id]     Tampilkan atau ganti provider (env AGNC_PROVIDER)\n");
+    agnc_console_repl_printf("  /mcp [reconnect]   Status server MCP; reconnect memuat ulang koneksi\n");
+    agnc_console_repl_printf("  /session           Daftar sesi tersimpan\n");
+    agnc_console_repl_printf("  /session <nama>    Simpan sesi ini, pindah ke sesi lain\n");
+    agnc_console_repl_printf("  /session new <nama>  Sesi baru kosong dengan nama tersebut\n");
+    agnc_console_repl_printf("  /session delete <nama>  Hapus file sesi dari disk\n");
+    agnc_console_repl_printf("  /doctor            Jalankan health check\n");
+    agnc_console_repl_printf("  /skills [reload]   Daftar skills aktif; reload muat ulang dari disk\n");
+    agnc_console_repl_printf("  /hooks             Daftar hook per event (config hooks.*)\n");
+    agnc_console_repl_printf("  /usage             Token usage sesi + turn terakhir\n");
+    agnc_console_repl_printf("  /verbose [on|off|toggle]  Log diagnostik runtime.verbose (simpan ke config)\n");
+    agnc_console_repl_printf("  /cost              Estimasi biaya USD sesi (heuristik)\n");
+    agnc_console_repl_printf("  /bg <prompt>       Jalankan prompt di background (antre hingga %d; sesi aktif)\n", AGNC_REPL_JOB_QUEUE_MAX);
+    agnc_console_repl_printf("  & <prompt>         Alias /bg (prefix & di awal baris)\n");
+    agnc_console_repl_printf("  /jobs              Status job background; /jobs cancel | clear\n");
+    agnc_console_repl_printf("  /view [tools|jobs|off]  Panel TUI bawah (VT terminal; runtime.tui)\n");
+    agnc_console_repl_printf("  /exit, /quit       Keluar\n");
+    agnc_console_repl_printf("\nWorkspace dan config agnc:\n");
+    agnc_console_repl_printf("  Tool workspace = repo root (cwd) atau env AGNC_WORKSPACE.\n");
+    agnc_console_repl_printf("  Pindah workspace: set AGNC_WORKSPACE + restart agnc, atau cd ke repo lain lalu jalankan agnc.\n");
+    agnc_console_repl_printf("  Config global = ~/.agnc.json (di luar repo); sesi = ~/.agnc/sessions/*.sqlite.\n");
+    agnc_console_repl_printf("  Root MCP filesystem = mcp.servers[].args di config; setelah edit config: /mcp reconnect.\n");
+    agnc_console_repl_printf("\nCtrl+C           Keluar REPL (layar dibersihkan)\n");
+    agnc_console_repl_printf("Ctrl+C saat request / bg job  Membatalkan tanpa keluar\n");
+    agnc_console_repl_printf("Ctrl+Enter         Baris baru di prompt (multi-line)\n");
+    agnc_console_repl_printf("  user      HH:MM:SS + teks (hijau)\n");
+    agnc_console_repl_printf("  asisten   HH:MM:SS + jawaban (default; nama file abu-abu)\n");
+    agnc_console_repl_printf("  agnc      timestamp + pesan sistem (abu-abu)\n");
+    agnc_console_end_repl_output();
 }
 
 static void agnc_repl_print_provider_status(const agnc_config_t *config)
@@ -183,11 +254,11 @@ static void agnc_repl_print_provider_status(const agnc_config_t *config)
     size_t index;
     size_t count = agnc_registry_gateway_count();
 
-    printf("  aktif:    %s\n", config->provider_id != NULL ? config->provider_id : "?");
-    printf("  gateway:  %s\n", config->gateway_id != NULL ? config->gateway_id : "?");
-    printf("  model:    %s\n", config->model != NULL ? config->model : "?");
-    printf("  base_url: %s\n", config->base_url != NULL ? config->base_url : "?");
-    printf("  gateway terdaftar:\n");
+    agnc_console_repl_printf("  aktif:    %s\n", config->provider_id != NULL ? config->provider_id : "?");
+    agnc_console_repl_printf("  gateway:  %s\n", config->gateway_id != NULL ? config->gateway_id : "?");
+    agnc_console_repl_printf("  model:    %s\n", config->model != NULL ? config->model : "?");
+    agnc_console_repl_printf("  base_url: %s\n", config->base_url != NULL ? config->base_url : "?");
+    agnc_console_repl_printf("  gateway terdaftar:\n");
 
     for (index = 0; index < count; index++) {
         const agnc_gateway_descriptor_t *gateway = agnc_registry_gateway_at(index);
@@ -199,7 +270,7 @@ static void agnc_repl_print_provider_status(const agnc_config_t *config)
         if (config->gateway_id != NULL && strcmp(config->gateway_id, gateway->id) == 0) {
             marker = " *";
         }
-        printf("  %-28s %s%s\n", gateway->id, gateway->label != NULL ? gateway->label : "", marker);
+        agnc_console_repl_printf("  %-28s %s%s\n", gateway->id, gateway->label != NULL ? gateway->label : "", marker);
     }
 }
 
@@ -359,9 +430,9 @@ static void agnc_repl_print_usage_detail(
 {
     const char *name = active_session_name != NULL ? active_session_name : "?";
 
-    printf("Token usage — sesi \"%s\":\n", name);
+    agnc_console_repl_printf("Token usage — sesi \"%s\":\n", name);
     if (session_usage != NULL) {
-        printf(
+        agnc_console_repl_printf(
             "  sesi: prompt %ld · completion %ld · total %ld\n",
             session_usage->prompt_tokens,
             session_usage->completion_tokens,
@@ -369,14 +440,14 @@ static void agnc_repl_print_usage_detail(
     }
 
     if (last_prompt < 0 && last_completion < 0 && last_total < 0) {
-        printf("  turn terakhir: (belum ada data provider)\n");
+        agnc_console_repl_printf("  turn terakhir: (belum ada data provider)\n");
         return;
     }
 
     if (last_total >= 0) {
-        printf("  turn terakhir: total %ld\n", last_total);
+        agnc_console_repl_printf("  turn terakhir: total %ld\n", last_total);
     } else {
-        printf(
+        agnc_console_repl_printf(
             "  turn terakhir: prompt %ld · completion %ld\n",
             last_prompt >= 0 ? last_prompt : 0,
             last_completion >= 0 ? last_completion : 0);
@@ -398,9 +469,23 @@ static void agnc_repl_usage_reload(agnc_session_usage_t *session_usage, const ch
 
 static agnc_status_t agnc_repl_reload_config(agnc_config_t *config)
 {
+    agnc_config_t fresh;
+    agnc_status_t status;
+
+    if (config == NULL) {
+        return AGNC_STATUS_INVALID_ARGUMENT;
+    }
+
+    agnc_config_init(&fresh);
+    status = agnc_config_load(NULL, &fresh);
+    if (status != AGNC_STATUS_OK) {
+        agnc_config_free(&fresh);
+        return status;
+    }
+
     agnc_config_free(config);
-    agnc_config_init(config);
-    return agnc_config_load(NULL, config);
+    *config = fresh;
+    return AGNC_STATUS_OK;
 }
 
 static void agnc_repl_apply_loaded_session_meta(
@@ -639,6 +724,53 @@ static void agnc_repl_print_hooks(const agnc_config_t *config)
     }
 }
 
+static int agnc_repl_str_ieq(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    while (*left != '\0' && *right != '\0') {
+        if (tolower((unsigned char)*left) != tolower((unsigned char)*right)) {
+            return 0;
+        }
+        left++;
+        right++;
+    }
+
+    return *left == '\0' && *right == '\0';
+}
+
+/*
+ * Parse on|off|true|false|toggle untuk /verbose.
+ * Return 0 = tanpa arg (tampilkan saja), 1 = parsed, -1 = invalid.
+ */
+static int agnc_repl_parse_setting_bool(const char *arg, int current, int *value_out)
+{
+    if (arg == NULL || arg[0] == '\0') {
+        return 0;
+    }
+
+    if (agnc_repl_str_ieq(arg, "on") || agnc_repl_str_ieq(arg, "true") || agnc_repl_str_ieq(arg, "1") ||
+        agnc_repl_str_ieq(arg, "ya")) {
+        *value_out = 1;
+        return 1;
+    }
+
+    if (agnc_repl_str_ieq(arg, "off") || agnc_repl_str_ieq(arg, "false") || agnc_repl_str_ieq(arg, "0") ||
+        agnc_repl_str_ieq(arg, "tidak")) {
+        *value_out = 0;
+        return 1;
+    }
+
+    if (agnc_repl_str_ieq(arg, "toggle")) {
+        *value_out = current ? 0 : 1;
+        return 1;
+    }
+
+    return -1;
+}
+
 static int agnc_repl_handle_slash(
     char *line,
     agnc_config_t *config,
@@ -656,6 +788,12 @@ static int agnc_repl_handle_slash(
 
     if (strncmp(line, "/help", 5) == 0) {
         agnc_repl_print_help();
+        return 1;
+    }
+
+    if (strncmp(line, "/cls", 4) == 0 &&
+        (line[4] == '\0' || line[4] == ' ' || line[4] == '\t')) {
+        agnc_console_clear_screen();
         return 1;
     }
 
@@ -764,6 +902,8 @@ static int agnc_repl_handle_slash(
             const agnc_gateway_descriptor_t *gateway =
                 agnc_registry_find_gateway(config->gateway_id);
 
+            agnc_console_begin_repl_output();
+            agnc_console_print_chat_system("model");
             printf(
                 "  provider: %s\n  gateway:  %s\n  model:    %s\n",
                 config->provider_id != NULL ? config->provider_id : "?",
@@ -786,6 +926,7 @@ static int agnc_repl_handle_slash(
             } else {
                 printf("  Daftar lengkap: /models [provider] [filter]\n");
             }
+            agnc_console_end_repl_output();
             return 1;
         }
 
@@ -809,8 +950,10 @@ static int agnc_repl_handle_slash(
             arg++;
         }
         if (*arg == '\0') {
+            agnc_console_begin_repl_output();
             agnc_console_print_chat_system("provider");
             agnc_repl_print_provider_status(config);
+            agnc_console_end_repl_output();
             return 1;
         }
 
@@ -992,6 +1135,26 @@ static int agnc_repl_handle_slash(
         return 1;
     }
 
+    if (strncmp(line, "/view", 5) == 0) {
+        arg = line + 5;
+        while (*arg == ' ') {
+            arg++;
+        }
+        if (*arg == '\0' || strcmp(arg, "off") == 0) {
+            agnc_console_print_chat_system("TUI panel: off");
+            agnc_tui_set_view(AGNC_TUI_VIEW_NORMAL);
+        } else if (strcmp(arg, "tools") == 0) {
+            agnc_console_print_chat_system("TUI panel: tools");
+            agnc_tui_set_view(AGNC_TUI_VIEW_TOOLS);
+        } else if (strcmp(arg, "jobs") == 0) {
+            agnc_console_print_chat_system("TUI panel: jobs");
+            agnc_tui_set_view(AGNC_TUI_VIEW_JOBS);
+        } else {
+            agnc_console_print_chat_system("format: /view [tools|jobs|off]");
+        }
+        return 1;
+    }
+
     if (strncmp(line, "/jobs", 5) == 0) {
         arg = line + 5;
         while (*arg == ' ') {
@@ -1014,7 +1177,10 @@ static int agnc_repl_handle_slash(
                 agnc_console_print_chat_system("antrean background sudah kosong");
             }
         } else {
+            agnc_console_begin_repl_output();
+            agnc_console_print_chat_system("jobs");
             agnc_repl_jobs_print_status();
+            agnc_console_end_repl_output();
         }
         return 1;
     }
@@ -1029,7 +1195,16 @@ static int agnc_repl_handle_slash(
             return 1;
         }
         agnc_console_print_chat_user(line);
-        if (agnc_repl_job_submit(arg, config, 0, NULL, NULL) != 0) {
+        if (*session_path == NULL) {
+            agnc_console_print_chat_system("background job gagal — tidak ada sesi aktif (gunakan /session)");
+        } else if (agnc_repl_job_submit(
+                       arg,
+                       config,
+                       *session_path,
+                       *active_session_name,
+                       0,
+                       NULL,
+                       NULL) != 0) {
             char detail[160];
 
             snprintf(
@@ -1043,12 +1218,64 @@ static int agnc_repl_handle_slash(
     }
 
     if (strncmp(line, "/usage", 6) == 0) {
+        agnc_console_begin_repl_output();
+        agnc_console_print_chat_system("usage");
         agnc_repl_print_usage_detail(
             *active_session_name,
             session_usage,
             last_usage_prompt != NULL ? *last_usage_prompt : -1,
             last_usage_completion != NULL ? *last_usage_completion : -1,
             last_usage_total != NULL ? *last_usage_total : -1);
+        agnc_console_end_repl_output();
+        return 1;
+    }
+
+    if (strncmp(line, "/verbose", 8) == 0) {
+        int new_verbose;
+        int parsed;
+        char detail[160];
+        agnc_status_t save_status;
+
+        arg = line + 8;
+        while (*arg == ' ') {
+            arg++;
+        }
+
+        if (*arg == '\0') {
+            snprintf(
+                detail,
+                sizeof(detail),
+                "verbose: %s (runtime.verbose di ~/.agnc.json)",
+                config->verbose ? "on" : "off");
+            agnc_console_print_chat_system(detail);
+            agnc_console_repl_printf("  gunakan: /verbose on|off|toggle\n");
+            return 1;
+        }
+
+        parsed = agnc_repl_parse_setting_bool(arg, config->verbose, &new_verbose);
+        if (parsed < 0) {
+            agnc_console_print_chat_system("format: /verbose [on|off|toggle]");
+            return 1;
+        }
+
+        save_status = agnc_config_set_runtime_verbose(NULL, new_verbose);
+        if (save_status != AGNC_STATUS_OK) {
+            snprintf(
+                detail,
+                sizeof(detail),
+                "gagal menyimpan verbose (%s)",
+                agnc_status_to_string(save_status));
+            agnc_console_print_chat_system(detail);
+            return 1;
+        }
+
+        config->verbose = new_verbose;
+        snprintf(
+            detail,
+            sizeof(detail),
+            "verbose %s (disimpan ke ~/.agnc.json)",
+            new_verbose ? "on" : "off");
+        agnc_console_print_chat_system(detail);
         return 1;
     }
 
@@ -1094,7 +1321,7 @@ int agnc_cli_run_interactive(void)
     status = agnc_config_load(NULL, &config);
     if (status != AGNC_STATUS_OK) {
         fprintf(stderr, "agnc: gagal memuat config (~/.agnc.json): %s\n", agnc_status_to_string(status));
-        fprintf(stderr, "agnc: salin config/agnc.example.json ke %%USERPROFILE%%\\.agnc.json\n");
+        fprintf(stderr, "agnc: periksa ~/.agnc.json atau jalankan `agnc doctor`\n");
         agnc_config_free(&config);
         return 1;
     }
@@ -1118,6 +1345,7 @@ int agnc_cli_run_interactive(void)
     if (status == AGNC_STATUS_OK && session_path != NULL) {
         /* Sisa atomic write dari proses sebelumnya (*.json.tmp.*). */
         (void)agnc_session_cleanup_stale_temp_files();
+        (void)agnc_session_cleanup_legacy_bg_files();
 
         char *loaded_provider = NULL;
         char *loaded_model = NULL;
@@ -1148,13 +1376,15 @@ int agnc_cli_run_interactive(void)
 
     agnc_repl_install_cancel_handler();
     agnc_repl_jobs_init();
+    agnc_repl_line_reset_exit();
+    agnc_tui_init(config.tui_enabled);
     agnc_repl_line_set_idle(
         agnc_repl_bg_idle_needed,
         agnc_repl_bg_idle_poll,
         agnc_repl_bg_idle_perm_needed,
         agnc_repl_bg_idle_perm_handle);
-    printf(">\n");
-    fflush(stdout);
+    agnc_repl_refresh_tui_status(&config, active_session_name, -1);
+    agnc_tui_show_prompt();
 
     memset(&options, 0, sizeof(options));
     options.cancel_flag = &g_repl_cancel_flag;
@@ -1168,18 +1398,19 @@ int agnc_cli_run_interactive(void)
     options.session_sqlite_path = session_path;
 
     for (;;) {
-        if (agnc_repl_jobs_poll()) {
-            printf(">\n");
-            fflush(stdout);
+        agnc_repl_bg_merge_bind(&conversation, session_path);
+        agnc_repl_refresh_tui_status(&config, active_session_name, last_usage_total);
+
+        if (agnc_repl_jobs_poll(&conversation, session_path)) {
+            agnc_tui_show_prompt();
         }
 
         if (!agnc_repl_read_line(line, sizeof(line))) {
             break;
         }
 
-        if (agnc_repl_jobs_poll()) {
-            printf(">\n");
-            fflush(stdout);
+        if (agnc_repl_jobs_poll(&conversation, session_path)) {
+            agnc_tui_show_prompt();
         }
 
         agnc_repl_trim(line);
@@ -1196,10 +1427,20 @@ int agnc_cli_run_interactive(void)
             if (*bg_prompt != '\0') {
                 agnc_console_clear_input_line();
                 agnc_console_print_chat_user(line);
-                (void)agnc_repl_job_submit(bg_prompt, &config, 0, NULL, NULL);
+                if (session_path != NULL) {
+                    (void)agnc_repl_job_submit(
+                        bg_prompt,
+                        &config,
+                        session_path,
+                        active_session_name,
+                        0,
+                        NULL,
+                        NULL);
+                } else {
+                    agnc_console_print_chat_system("background job gagal — tidak ada sesi aktif");
+                }
             }
-            printf(">\n");
-            fflush(stdout);
+            agnc_tui_show_prompt();
             continue;
         }
 
@@ -1221,8 +1462,7 @@ int agnc_cli_run_interactive(void)
                     break;
                 }
             }
-            printf(">\n");
-            fflush(stdout);
+            agnc_tui_show_prompt();
             continue;
         }
 
@@ -1238,9 +1478,12 @@ int agnc_cli_run_interactive(void)
         g_repl_cancel_flag = 0;
 
         if (status == AGNC_STATUS_CANCELLED) {
-            agnc_console_print_chat_system("request dibatalkan");
-            printf(">\n");
-            fflush(stdout);
+            if (agnc_tui_is_active()) {
+                agnc_tui_set_toast("request dibatalkan");
+            } else {
+                agnc_console_print_chat_system("request dibatalkan");
+            }
+            agnc_tui_show_prompt();
             continue;
         }
 
@@ -1260,8 +1503,7 @@ int agnc_cli_run_interactive(void)
             (void)agnc_session_sync(session_path, &conversation, &config);
         }
 
-        printf(">\n");
-        fflush(stdout);
+        agnc_tui_show_prompt();
     }
 
     if (session_path != NULL) {
@@ -1270,6 +1512,8 @@ int agnc_cli_run_interactive(void)
 
     free(session_path);
     free(active_session_name);
+    agnc_tui_shutdown();
+    agnc_console_clear_screen();
     agnc_mcp_session_free(&mcp_session);
     agnc_repl_jobs_shutdown();
     agnc_conversation_clear(&conversation);

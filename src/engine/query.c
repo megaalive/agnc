@@ -1686,10 +1686,20 @@ cleanup:
         if (agnc_query_emit_last_tool_fallback(conversation, chat_assistant_timestamp, suppress_chat_output)) {
             any_output = 1;
         } else {
-            fprintf(stderr, "agnc: warning: provider returned no visible output (enable runtime.verbose for details)\n");
+            fprintf(stderr, "agnc: warning: provider returned no visible output (/verbose on untuk detail)\n");
             if (chat_assistant_timestamp) {
-                agnc_console_print_chat_system(
-                    "model tidak mengembalikan jawaban (aktifkan runtime.verbose atau ulangi prompt)");
+                const char *empty_hint = agnc_sse_parser_get_empty_hint(&parser);
+                char line[640];
+
+                if (empty_hint != NULL && empty_hint[0] != '\0') {
+                    snprintf(line, sizeof(line), "%s", empty_hint);
+                } else {
+                    snprintf(
+                        line,
+                        sizeof(line),
+                        "model tidak mengembalikan jawaban (/verbose on atau ulangi prompt)");
+                }
+                agnc_console_print_chat_system(line);
             }
         }
     }

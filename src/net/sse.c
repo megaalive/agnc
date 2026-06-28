@@ -108,10 +108,12 @@ void agnc_sse_parser_free(agnc_sse_parser_t *parser)
     free(parser->last_content_chunk);
     free(parser->last_reasoning_chunk);
     free(parser->last_error);
+    free(parser->empty_hint);
     parser->line_buffer = NULL;
     parser->last_content_chunk = NULL;
     parser->last_reasoning_chunk = NULL;
     parser->last_error = NULL;
+    parser->empty_hint = NULL;
     parser->printed_any = 0;
     parser->line_length = 0;
     parser->line_capacity = 0;
@@ -164,6 +166,24 @@ const agnc_sse_tool_call_t *agnc_sse_parser_get_tool_call(const agnc_sse_parser_
 int agnc_sse_parser_printed_any(const agnc_sse_parser_t *parser)
 {
     return parser->printed_any;
+}
+
+const char *agnc_sse_parser_get_empty_hint(const agnc_sse_parser_t *parser)
+{
+    return parser != NULL ? parser->empty_hint : NULL;
+}
+
+void agnc_sse_parser_set_empty_hint(agnc_sse_parser_t *parser, const char *hint)
+{
+    if (parser == NULL) {
+        return;
+    }
+
+    free(parser->empty_hint);
+    parser->empty_hint = NULL;
+    if (hint != NULL && hint[0] != '\0') {
+        parser->empty_hint = agnc_strdup_local(hint);
+    }
 }
 
 int agnc_sse_parser_has_usage(const agnc_sse_parser_t *parser)

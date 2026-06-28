@@ -49,6 +49,9 @@ agnc_status_t agnc_session_cleanup_stale_temp_files(void);
 
 agnc_status_t agnc_session_cleanup_stale_temp_files_in_dir(const char *sessions_dir);
 
+agnc_status_t agnc_session_cleanup_legacy_bg_files(void);
+agnc_status_t agnc_session_cleanup_legacy_bg_files_in_dir(const char *sessions_dir);
+
 /* Muat/simpan sesi SQLite; migrasi otomatis dari .json legacy saat load. */
 agnc_status_t agnc_session_load(
     const char *path,
@@ -100,5 +103,41 @@ agnc_status_t agnc_session_meta_delete(const char *path, const char *key);
 agnc_status_t agnc_session_cost_load(const char *path, double *total_usd_out);
 agnc_status_t agnc_session_cost_accumulate(const char *path, double delta_usd);
 agnc_status_t agnc_session_cost_reset(const char *path);
+
+/* --- Background jobs (schema v2, satu file sesi induk) --- */
+
+/* Id pesan foreground terakhir (0 jika kosong). */
+agnc_status_t agnc_session_foreground_max_id(const char *path, int64_t *max_id_out);
+
+/*
+ * Muat konteks foreground sampai max_id (inklusif) ke RAM untuk job bg.
+ * max_id <= 0 = tanpa batas atas.
+ */
+agnc_status_t agnc_session_load_bg_context(
+    const char *path,
+    agnc_conversation_t *conversation,
+    int64_t max_id,
+    size_t tail_limit);
+
+agnc_status_t agnc_session_bg_job_create(
+    const char *path,
+    unsigned job_id,
+    const char *prompt,
+    int64_t context_parent_id);
+
+agnc_status_t agnc_session_bg_job_set_status(
+    const char *path,
+    unsigned job_id,
+    const char *status,
+    const char *summary,
+    const char *error);
+
+/* Sisipkan baris ringkas [bg #N] ke riwayat foreground sesi induk. */
+agnc_status_t agnc_session_bg_append_foreground_notice(
+    const char *path,
+    unsigned job_id,
+    const char *prompt,
+    const char *summary,
+    const agnc_config_t *config);
 
 #endif /* AGNC_SESSION_H */

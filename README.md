@@ -22,8 +22,9 @@ Satu lokasi output untuk semua workflow: **`out/build/x64-Debug/agnc.exe`** (sam
 ### Opsi A: Script build (disarankan)
 
 ```powershell
-.\scripts\build.ps1          # Debug (default)
+.\scripts\build.ps1          # Debug (default, tanpa gRPC)
 .\scripts\build.ps1 release  # Release
+.\scripts\build.ps1 release -Grpc  # Release + agnc serve (~7 MB, build grpc lama)
 .\out\build\x64-Debug\agnc.exe --version
 .\out\build\x64-Debug\agnc.exe doctor
 ```
@@ -41,11 +42,17 @@ cmake --build --preset x64-Debug
 .\out\build\x64-Debug\agnc.exe doctor
 ```
 
+## Distribusi
+
+`agnc.exe` bisa didistribusikan **tanpa installer** (zip/portable). Config dan data pengguna disimpan di `%USERPROFILE%\.agnc.json` dan `%USERPROFILE%\.agnc\` — terpisah dari binary.
+
 ## Perintah CLI
 
 ### Setup config
 
-Salin template ke home directory, lalu sesuaikan provider aktif dan path MCP:
+**First run:** jika `~/.agnc.json` belum ada, `agnc` membuatnya otomatis (provider default `ollama`, tanpa API key, MCP kosong) plus folder `~/.agnc/sessions`, `cache`, `skills`. Edit file itu untuk provider/API key, lalu `agnc doctor`.
+
+Opsional — salin template lengkap dari repo:
 
 ```powershell
 copy config\agnc.example.json $env:USERPROFILE\.agnc.json
@@ -120,7 +127,8 @@ Contoh nyata (disanitasi dari pemakaian harian; salin ke `%USERPROFILE%\.agnc.js
   "runtime": {
     "max_tool_iterations": 25,
     "stream": true,
-    "verbose": false
+    "verbose": false,
+    "tui": false
   },
   "paths": {
     "sessions_dir": "~/.agnc/sessions",
@@ -137,6 +145,7 @@ Contoh nyata (disanitasi dari pemakaian harian; salin ke `%USERPROFILE%\.agnc.js
 | `api_key_file` | Path absolut ke file teks satu baris (API key); `~` **tidak** diekspansi — gunakan path penuh |
 | `oauth` | `true`: muat token dari `~/.agnc/oauth/<id>.json` + auto-refresh jika ada `refresh_token` |
 | `default_model` | Model default provider ini |
+| `runtime.tui` | `false` (default): REPL klasik. `true`: TUI eksperimental — belum stabil; lihat Fase 6.25 |
 | `mcp.servers[].args` | Argumen terakhir = root filesystem MCP (biasanya repo Anda) |
 
 Kredensial API key untuk dev lokal: folder `.keys/` (gitignored) atau `%USERPROFILE%\.agnc\keys\`.
@@ -187,13 +196,19 @@ Jalankan tanpa argumen untuk REPL chat dengan streaming:
 .\out\build\x64-Debug\agnc.exe
 ```
 
-Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/models`, `/provider`, `/mcp`, `/session`, `/doctor`, `/exit`.
+Slash commands: `/help`, `/clear`, `/cls`, `/compact`, `/model`, `/models`, `/provider`, `/mcp`, `/session`, `/bg`, `/jobs`, `/verbose`, `/doctor`, `/exit`.
 
-**Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, dan wrap multi-baris — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`) dan sesi input konsol (`src/cli/console.c`). Di Unix fallback ke `fgets` dengan history.
+**REPL klasik (default):** `runtime.tui` **false** — scroll alami terminal, prompt `> `, timestamp per pesan, spinner saat menunggu model. Ini jalur yang distabilkan dan direkomendasikan.
 
-**Tampilan REPL:** blok chat ber-timestamp, warna (user hijau, kode abu-abu, sistem dim), spinner saat menunggu model, log aktivitas tool, prompt izin tool terintegrasi.
+**Line editing (Windows):** cursor, Backspace/Delete, Home/End, history 32 baris (panah atas/bawah), paste dari clipboard, Ctrl+Enter baris baru, Ctrl+C keluar (idle) atau batalkan request — lewat `agnc_repl_read_line` (`src/cli/line_edit.c`).
 
-**Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis.
+**Tampilan:** blok chat ber-timestamp, warna (user hijau, kode abu-abu, sistem dim), log aktivitas tool, prompt izin tool terintegrasi.
+
+**TUI eksperimental (`runtime.tui: true`):** status bar bawah, panel `/view tools|jobs|off`. **Nonaktif secara default** — layout ANSI+Win32 belum stabil di Windows; rencana penggantian notcurses di Fase 6.25 (`roadmap.md`). Jika Anda punya `"tui": true` di `~/.agnc.json`, set ke `false` lalu restart agnc.
+
+**Session:** multi-sesi SQLite (`<nama>.sqlite`); lazy load 48 pesan terakhir ke RAM; sync append-only per turn; context LLM windowed (32 pesan + ringkasan). `/session`, `/session delete`, `/compact` selaraskan storage. Migrasi `.json` legacy otomatis. Schema v2: WAL, kolom `is_bg`/`job_id` di `messages`, tabel `bg_jobs` untuk job background.
+
+**Background jobs:** `/bg <prompt>` atau prefix `&` menjalankan prompt di worker terpisah dengan konteks sesi aktif (snapshot foreground saat submit). Hasil detail disimpan di sesi induk (`is_bg=1`); ringkasan `[bg #N]` muncul di riwayat foreground + notifikasi REPL. Antre FIFO (maks 16); `/jobs`, `/jobs cancel`, `/jobs clear`. File legacy `bg-*.sqlite` dihapus otomatis saat startup REPL.
 
 **Skills:** file `.md` atau `*/SKILL.md` di `~/.agnc/skills` dan `.agnc/skills` dimuat ke system prompt. Konfigurasi `skills.enabled` / `skills.paths` di `~/.agnc.json`. REPL: `/skills`, `/skills reload`.
 
@@ -205,7 +220,7 @@ Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/models`, `/provider`,
 
 **Model:** `/model` tanpa argumen menampilkan model aktif; `/model <id>` mengganti model. Discovery semua provider: `agnc models [provider] [filter]` atau REPL `/models` (substring filter, case-insensitive). Ctrl+C membatalkan request chat maupun discovery. Menjawab `y` pada prompt permission mengizinkan kategori tool tersebut untuk sisa sesi REPL (shell, tulis/edit, MCP, web fetch).
 
-Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: turn N · sesi M`). `/usage` menampilkan total sesi; total disimpan di meta SQLite sesi. `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
+Setelah setiap turn berhasil, REPL menampilkan ringkasan token usage jika provider mengirimkannya (`token: turn N · sesi M`). `/usage` menampilkan total sesi; total disimpan di meta SQLite sesi. `/verbose on|off|toggle` mengubah `runtime.verbose` di `~/.agnc.json` (log diagnostik ke stderr). `/mcp` menampilkan status server MCP; `/mcp reconnect` memuat ulang koneksi.
 
 ### Mode headless `--print`
 
@@ -279,32 +294,34 @@ Config write memakai **atomic write** (`agnc_config_save_json`) agar tidak corru
 - Folder `.keys/` hanya untuk development lokal dan **tidak boleh** di-commit ke git.
 - API key tidak pernah dicetak ke log atau stdout.
 
-### gRPC server (`agnc serve`)
+## gRPC server (Fase 6.22)
 
-Build gRPC aktif default (`AGNC_BUILD_GRPC=ON`). **`build.ps1 release` memakai `VCPKG_BUILD_TYPE=release`** — vcpkg **tidak** membangun grpc debug (`x64-windows-dbg`). Build pertama grpc release tetap lama (~15–30 menit) tapi setengah dari dbg+rel.
-
-Jika configure lama tanpa flag ini sudah mulai grpc debug, hentikan lalu bersihkan cache vcpkg:
+**Default build tanpa gRPC** — REPL/CLI cepat, binary ~1 MB. Untuk `agnc serve`:
 
 ```powershell
-Remove-Item -Recurse -Force out\build\x64-Release\vcpkg_installed -ErrorAction SilentlyContinue
-.\scripts\build.ps1 release
-```
-
-Nonaktifkan gRPC untuk build cepat tanpa `agnc serve`:
-
-```powershell
-cmake --preset x64-Release -DAGNC_BUILD_GRPC=OFF
-cmake --build --preset x64-Release
-```
-
-Build normal (Release = grpc **release** saja):
-
-```powershell
-.\scripts\build.ps1 release
+.\scripts\build.ps1 release -Grpc
 .\out\build\x64-Release\agnc.exe serve --listen 127.0.0.1:50051
 ```
 
-Tanpa gRPC (`AGNC_BUILD_GRPC=OFF`), `agnc serve` menampilkan pesan rebuild.
+`-Grpc` mengaktifkan `AGNC_BUILD_GRPC=ON` dan feature vcpkg `grpc` (protobuf + gRPC++). **`build.ps1 release -Grpc` memakai `VCPKG_BUILD_TYPE=release`** — vcpkg **tidak** membangun grpc debug (`x64-windows-dbg`). Build pertama grpc release tetap lama (~15–30 menit).
+
+**Ukuran binary:** `agnc.exe` Release **dengan** `-Grpc` ~**7 MB** (link statis protobuf + gRPC++). Tanpa gRPC jauh lebih kecil.
+
+CMake manual (setara):
+
+```powershell
+cmake --preset x64-Release -DAGNC_BUILD_GRPC=ON
+cmake --build --preset x64-Release
+```
+
+Jika configure lama sudah mulai grpc debug, hentikan lalu bersihkan cache vcpkg:
+
+```powershell
+Remove-Item -Recurse -Force out\build\x64-Release\vcpkg_installed -ErrorAction SilentlyContinue
+.\scripts\build.ps1 release -Grpc
+```
+
+Tanpa gRPC, `agnc serve` menampilkan pesan rebuild.
 
 RPC (`proto/agnc/v1/agent.proto`):
 
@@ -389,10 +406,11 @@ Lihat `roadmap.md` untuk rencana implementasi dan `docs/smoke-test.md` untuk che
 - **Fase 6.14** — hooks shell per event agent: selesai
 - **Fase 6.15** — gateway Ollama lokal + doctor + `/model` list: selesai
 - **Fase 6.16** — OpenCode native, `agnc models`, cancel Ctrl+C HTTP: selesai
-- **Fase 6.17** — background sessions (`/bg`, `/jobs`): selesai
+- **Fase 6.17** — background jobs (`/bg`, `/jobs`, schema v2 sesi induk): selesai
 - **Fase 6.18** — Anthropic native + OAuth token store: selesai
 - **Fase 6.19** — sub-agent tool: selesai
 - **Fase 6.20** — cost tracking (`/cost`): selesai
 - **Fase 6.21** — OAuth refresh flow (`agnc oauth refresh`, auto-refresh saat load config): selesai
 - **Fase 6.22** — gRPC server (`agnc serve`): selesai
-- **Fase 6.23+** — TUI, job bg paralel: backlog (lihat `roadmap.md` §12.6)
+- **Fase 6.23** — TUI REPL eksperimental (default off; notcurses di 6.25)
+- **Fase 6.24** — background job paralel (multi-worker): backlog (lihat `roadmap.md` §12.6)
